@@ -45,6 +45,12 @@ bool FieldOps::update(const LowState &, ControlRequests &, FieldMap &context) {
   return true;
 }
 
+void FieldOps::commit(const FieldMap &context) {
+  for (auto &operation : operations_) {
+    operation->commit(context);
+  }
+}
+
 STEPIT_REGISTER_MODULE(field_ops, kDefPriority, Module::make<FieldOps>);
 }  // namespace neuro_policy
 }  // namespace stepit

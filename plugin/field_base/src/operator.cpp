@@ -145,21 +145,31 @@ bool CopyOperator::update(FieldMap &context) {
 }
 
 HistoryOperator::HistoryOperator(const YAML::Node &config) {
-  STEPIT_ASSERT(config["source"] and config["target"], "Stack op must contain 'source' and 'target'.");
-  source_id_ = registerRequirement(yml::readAs<std::string>(config, "source"));
-  target_id_ = registerProvision(yml::readAs<std::string>(config, "target"), 0);
-
-  yml::setTo(config["history_len"], history_len_);
-  STEPIT_ASSERT(history_len_ > 0, "'history_len' of stack op must be greater than 0.");
-  yml::setIf(config["newest_first"], newest_first_);
-  yml::setIf(config["include_current_frame"], include_current_frame_);
-  if (yml::hasValue(config, "default_value")) {
-    yml::setTo(config, "default_value", default_value_);
+  STEPIT_ASSERT(yml::hasValue(config, "source") and yml::hasValue(config, "target"),
+                "History op must contain 'source' and 'target'.");
+  auto source_name = yml::readAs<std::string>(config, "source");
+  auto target_name = yml::readAs<std::string>(config, "target");
+  yml::setIf(config, "source_size", source_size_);
+  yml::setTo(config, "history_len", history_len_);
+  STEPIT_ASSERT(history_len_ > 0, "'history_len' of history op must be greater than 0.");
+  yml::setIf(config, "newest_first", newest_first_);
+  yml::setIf(config, "include_current_frame", include_current_frame_);
+  if (yml::isDefined(config, "default_value")) {
+    if (yml::hasValue(config, "default_value")) yml::setTo(config, "default_value", default_value_);
+  } else {  // Fill with zeros by default if not provided
+    default_value_ = ArrXf::Zero(1);
   }
 
+  source_id_ = registerField(source_name, source_size_);
+  if (include_current_frame_ or default_value_.size() == 0) {
+    registerRequirement(source_id_);
+  }  // otherwise, skip requirement registration since the field is not needed at update time
+  target_id_ = registerProvision(target_name, 0);
+
   try {
-    init();
+    source_size_ = getFieldSize(source_id_);
   } catch (const UndefinedFieldSizeError &) {}
+  if (source_size_ > 0) init();
 }
 
 void HistoryOperator::init() {
@@ -172,7 +182,7 @@ void HistoryOperator::init() {
     default_value_ = VecXf::Constant(source_size_, default_value_[0]);
   } else if (default_value_.size() != 0) {
     STEPIT_ASSERT(default_value_.size() == source_size_,
-                  "Default value size of stack op does not match source field size.");
+                  "Default value size of history op does not match the source field size.");
   }
 
   history_.allocate(history_len_);
@@ -181,6 +191,10 @@ void HistoryOperator::init() {
 
 bool HistoryOperator::reset() {
   history_.clear();
+  if (default_value_.size() > 0) {
+    history_.fill(default_value_);
+    updateOutput();
+  }
   return true;
 }
 
@@ -197,25 +211,32 @@ void HistoryOperator::updateOutput() {
   for (const auto &frame : history_) {
     stackField(frame, offset, output_);
   }
-  STEPIT_ASSERT(offset == output_.size(), "Stack op output size does not match total history size.");
+  STEPIT_ASSERT(offset == output_.size(), "History field size ({}) does not match the target size ({}).", offset,
+                output_.size());
 }
 
 bool HistoryOperator::update(FieldMap &context) {
-  const auto &frame = context.at(source_id_);
   if (history_.empty()) {
-    history_.fill(default_value_.size() > 0 ? default_value_ : frame);
+    history_.fill(context.at(source_id_));
+    updateOutput();
   }
 
   if (include_current_frame_) {
-    push(frame);
+    push(context.at(source_id_));
     updateOutput();
-  } else {
-    updateOutput();
-    push(frame);
   }
 
   context[target_id_] = output_;
   return true;
+}
+
+void HistoryOperator::commit(const FieldMap &context) {
+  if (not include_current_frame_) {
+    auto it = context.find(source_id_);
+    STEPIT_ASSERT(it != context.end(), "Field '{}' not found at runtime.", getFieldName(source_id_));
+    push(it->second);
+    updateOutput();
+  }
 }
 
 MaskedFillOperator::MaskedFillOperator(const YAML::Node &config) {

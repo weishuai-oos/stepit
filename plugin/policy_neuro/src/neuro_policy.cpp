@@ -141,7 +141,7 @@ bool NeuroPolicy::act(const LowState &low_state, ControlRequests &requests, LowC
     }
   }
   for (const auto &module : resolved_modules_) {
-    module->finalize(context);
+    module->commit(context);
   }
   action_ = context.at(action_id_);
   actuator_->setLowCmd(cmd, action_);

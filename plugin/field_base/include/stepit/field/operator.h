@@ -10,7 +10,7 @@ class Operator : public Node, public Interface<Operator, const YAML::Node & /* c
   virtual void init() {}
   virtual bool reset() { return true; }
   virtual bool update(FieldMap &context) = 0;
-  virtual void finalize(const FieldMap &context) {}
+  virtual void commit(const FieldMap &context) {}
 };
 
 class AffineOperator : public Operator {
@@ -74,6 +74,7 @@ class HistoryOperator : public Operator {
   void init() override;
   bool reset() override;
   bool update(FieldMap &context) override;
+  void commit(const FieldMap &context) override;
 
  private:
   void push(const ArrXf &frame);

@@ -12,6 +12,7 @@ class FieldOps : public Module {
   void init() override;
   bool reset() override;
   bool update(const LowState &, ControlRequests &, FieldMap &context) override;
+  void commit(const FieldMap &context) override;
 
  private:
   std::vector<field::Operator::Ptr> operations_;
