@@ -24,6 +24,7 @@ class AffineOperator : public Operator {
   YAML::Node node_;
   FieldId source_id_{};
   FieldId target_id_{};
+  FieldSize field_size_{};
   ArrXf scale_;
   ArrXf bias_;
 };
@@ -38,6 +39,7 @@ class ConcatOperator : public Operator {
  private:
   FieldIdVec source_ids_;
   FieldId target_id_{};
+  FieldSize target_size_{};
   ArrXf buffer_;
 };
 
@@ -62,6 +64,7 @@ class CopyOperator : public Operator {
  private:
   FieldId source_id_{};
   FieldId target_id_{};
+  FieldSize field_size_{};
 };
 
 class HistoryOperator : public Operator {
@@ -80,6 +83,7 @@ class HistoryOperator : public Operator {
   FieldId target_id_{};
   std::uint32_t history_len_{};
   FieldSize source_size_{};
+  FieldSize target_size_{};
   bool newest_first_{true};
   bool include_current_frame_{true};
   ArrXf default_value_;
@@ -97,6 +101,7 @@ class MaskedFillOperator : public Operator {
  private:
   FieldId source_id_{};
   FieldId target_id_{};
+  FieldSize field_size_{};
   std::vector<FieldSize> indices_;
   float value_{};
   ArrXf buffer_;

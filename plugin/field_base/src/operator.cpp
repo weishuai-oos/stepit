@@ -19,17 +19,23 @@ AffineOperator::AffineOperator(const YAML::Node &config) : node_(config) {
   }
   STEPIT_ASSERT(not(config["scale"] and config["std"]), "Cannot specify both 'scale' and 'std' in an affine op.");
   STEPIT_ASSERT(not(config["bias"] and config["mean"]), "Cannot specify both 'bias' and 'mean' in an affine op.");
+
+  try {
+    init();
+  } catch (const UndefinedFieldSizeError &) {}
 }
 
 void AffineOperator::init() {
-  auto field_size = getFieldSize(source_id_);
-  scale_          = ArrXf::Ones(field_size);
-  bias_           = ArrXf::Zero(field_size);
+  if (field_size_ > 0) return;
+  field_size_ = getFieldSize(source_id_);
+  setFieldSize(target_id_, field_size_);
+  scale_ = ArrXf::Ones(field_size_);
+  bias_  = ArrXf::Zero(field_size_);
 
   if (yml::hasValue(node_, "scale")) {
     yml::setTo(node_, "scale", scale_);
   } else if (yml::hasValue(node_, "std")) {
-    ArrXf std{ArrXf::Ones(field_size)};
+    ArrXf std{ArrXf::Ones(field_size_)};
     yml::setTo(node_, "std", std);
     STEPIT_ASSERT((std > kEPS).all(), "'std' values of affine op must be positive.");
     scale_ = std.cwiseInverse();
@@ -38,13 +44,9 @@ void AffineOperator::init() {
   if (yml::hasValue(node_, "bias")) {
     yml::setTo(node_, "bias", bias_);
   } else if (yml::hasValue(node_, "mean")) {
-    ArrXf mean{ArrXf::Zero(field_size)};
+    ArrXf mean{ArrXf::Zero(field_size_)};
     yml::setTo(node_, "mean", mean);
     bias_ = -mean.cwiseProduct(scale_);
-  }
-
-  if (target_id_ != source_id_) {
-    setFieldSize(target_id_, field_size);
   }
 }
 
@@ -62,14 +64,20 @@ ConcatOperator::ConcatOperator(const YAML::Node &config) {
     source_ids_.push_back(registerRequirement(yml::readAs<std::string>(source_node)));
   }
   target_id_ = registerProvision(yml::readAs<std::string>(config["target"]), 0);
+
+  try {
+    init();
+  } catch (const UndefinedFieldSizeError &) {}
 }
 
 void ConcatOperator::init() {
+  if (target_size_ > 0) return;
   FieldSize total_size = 0;
   for (auto source_id : source_ids_) {
     total_size += getFieldSize(source_id);
   }
   setFieldSize(target_id_, total_size);
+  target_size_ = total_size;
   buffer_.resize(total_size);
 }
 
@@ -119,9 +127,17 @@ CopyOperator::CopyOperator(const YAML::Node &config) {
   STEPIT_ASSERT(source_name != target_name, "Source and target cannot be the same in a copy op.");
   source_id_ = registerRequirement(source_name);
   target_id_ = registerProvision(target_name, 0);
+
+  try {
+    init();
+  } catch (const UndefinedFieldSizeError &) {}
 }
 
-void CopyOperator::init() { setFieldSize(target_id_, getFieldSize(source_id_)); }
+void CopyOperator::init() {
+  if (field_size_ > 0) return;
+  field_size_ = getFieldSize(source_id_);
+  setFieldSize(target_id_, field_size_);
+}
 
 bool CopyOperator::update(FieldMap &context) {
   context[target_id_] = context.at(source_id_);
@@ -140,12 +156,17 @@ HistoryOperator::HistoryOperator(const YAML::Node &config) {
   if (yml::hasValue(config, "default_value")) {
     yml::setTo(config, "default_value", default_value_);
   }
+
+  try {
+    init();
+  } catch (const UndefinedFieldSizeError &) {}
 }
 
 void HistoryOperator::init() {
-  source_size_                = getFieldSize(source_id_);
-  const FieldSize target_size = source_size_ * history_len_;
-  setFieldSize(target_id_, target_size);
+  if (target_size_ > 0) return;
+  source_size_ = getFieldSize(source_id_);
+  target_size_ = source_size_ * history_len_;
+  setFieldSize(target_id_, target_size_);
 
   if (default_value_.size() == 1) {
     default_value_ = VecXf::Constant(source_size_, default_value_[0]);
@@ -155,7 +176,7 @@ void HistoryOperator::init() {
   }
 
   history_.allocate(history_len_);
-  output_.resize(target_size);
+  output_.resize(target_size_);
 }
 
 bool HistoryOperator::reset() {
@@ -224,18 +245,22 @@ MaskedFillOperator::MaskedFillOperator(const YAML::Node &config) {
     STEPIT_ASSERT(end > start, "Slice range [start={}, end={}) is invalid.", start, end);
     for (FieldSize i{start}; i < end; ++i) indices_.push_back(i);
   }
-
   yml::setIf(config, "value", value_);
+
+  try {
+    init();
+  } catch (const UndefinedFieldSizeError &) {}
 }
 
 void MaskedFillOperator::init() {
-  auto source_size = getFieldSize(source_id_);
+  if (field_size_ > 0) return;
+  field_size_ = getFieldSize(source_id_);
   for (auto index : indices_) {
-    STEPIT_ASSERT(index < source_size, "masked_fill index {} is out of range [0, {}) for '{}'.", index, source_size,
+    STEPIT_ASSERT(index < field_size_, "masked_fill index {} is out of range [0, {}) for '{}'.", index, field_size_,
                   getFieldName(source_id_));
   }
-  setFieldSize(target_id_, source_size);
-  buffer_.resize(source_size);
+  setFieldSize(target_id_, field_size_);
+  buffer_.resize(field_size_);
 }
 
 bool MaskedFillOperator::update(FieldMap &context) {
@@ -249,8 +274,6 @@ bool MaskedFillOperator::update(FieldMap &context) {
 
 SliceOperator::SliceOperator(const YAML::Node &config) {
   STEPIT_ASSERT(config["source"] and config["target"], "Slice op must contain 'source' and 'target'.");
-  source_id_ = registerRequirement(yml::readAs<std::string>(config, "source"));
-  target_id_ = registerProvision(yml::readAs<std::string>(config, "target"), 0);
 
   if (yml::hasValue(config, "indices")) {
     const auto indices_node = config["indices"];
@@ -265,6 +288,9 @@ SliceOperator::SliceOperator(const YAML::Node &config) {
     STEPIT_ASSERT(end > start, "Slice range [start={}, end={}) is invalid.", start, end);
     for (FieldSize i{start}; i < end; ++i) indices_.push_back(i);
   }
+
+  source_id_ = registerRequirement(yml::readAs<std::string>(config, "source"));
+  target_id_ = registerProvision(yml::readAs<std::string>(config, "target"), static_cast<FieldSize>(indices_.size()));
 }
 
 void SliceOperator::init() {
@@ -273,9 +299,7 @@ void SliceOperator::init() {
     STEPIT_ASSERT(index < source_size, "Slice index {} is out of range [0, {}) for '{}'.", index, source_size,
                   getFieldName(source_id_));
   }
-  auto target_size = static_cast<FieldSize>(indices_.size());
-  setFieldSize(target_id_, target_size);
-  buffer_.resize(target_size);
+  buffer_.resize(getFieldSize(target_id_));
 }
 
 bool SliceOperator::update(FieldMap &context) {
