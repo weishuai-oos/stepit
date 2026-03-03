@@ -1,8 +1,6 @@
 #ifndef STEPIT_NEURO_POLICY_ACTION_SOURCE_H_
 #define STEPIT_NEURO_POLICY_ACTION_SOURCE_H_
 
-#include <string>
-
 #include <stepit/utils.h>
 #include <stepit/policy_neuro/module.h>
 

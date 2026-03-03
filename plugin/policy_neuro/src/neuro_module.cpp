@@ -92,7 +92,13 @@ void NeuroModule::parseFields(bool is_input, const FieldNameVec &node_names, con
       field_names[i].push_back(field_name);
       field_sizes[i].push_back(field_size);
       field_ids[i].push_back(field_id);
-      (is_input ? requirements_ : provisions_).insert(field_id);
+      if (is_input) {
+        registerRequirement(field_id);
+      } else {
+        STEPIT_ASSERT(provisions().count(field_id) == 0, "Field '{}' is already registered as a provision.",
+                      getFieldName(field_id));
+        registerProvision(field_id);
+      }
     }
     return;
   }
@@ -148,7 +154,15 @@ void NeuroModule::parseFields(bool is_input, const FieldNameVec &node_names, con
     STEPIT_ASSERT(total_size == node_sizes[i],
                   "Total size of fields for node '{}' must equal the neural network's {} size {}, but got {}.",
                   node_names[i], identifier, node_sizes[i], total_size);
-    (is_input ? requirements_ : provisions_).insert(field_ids[i].begin(), field_ids[i].end());
+    for (auto field_id : field_ids[i]) {
+      if (is_input) {
+        registerRequirement(field_id);
+      } else {
+        STEPIT_ASSERT(provisions().count(field_id) == 0, "Field '{}' is already registered as a provision.",
+                      getFieldName(field_id));
+        registerProvision(field_id);
+      }
+    }
   }
 }
 

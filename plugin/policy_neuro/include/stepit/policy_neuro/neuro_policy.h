@@ -1,7 +1,9 @@
 #ifndef STEPIT_NEURO_POLICY_NEURO_POLICY_H_
 #define STEPIT_NEURO_POLICY_NEURO_POLICY_H_
 
+#include <list>
 #include <set>
+#include <vector>
 
 #include <stepit/policy.h>
 #include <stepit/utils.h>

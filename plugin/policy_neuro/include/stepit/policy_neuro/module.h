@@ -1,10 +1,7 @@
 #ifndef STEPIT_NEURO_POLICY_FIELD_H_
 #define STEPIT_NEURO_POLICY_FIELD_H_
 
-#include <map>
-#include <mutex>
-#include <utility>
-#include <vector>
+#include <string>
 
 #include <stepit/control_input.h>
 #include <stepit/policy.h>

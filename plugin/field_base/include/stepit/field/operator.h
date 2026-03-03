@@ -1,5 +1,5 @@
-#ifndef STEPIT_FIELD_OPERATION_H_
-#define STEPIT_FIELD_OPERATION_H_
+#ifndef STEPIT_FIELD_OPERATOR_H_
+#define STEPIT_FIELD_OPERATOR_H_
 
 #include <stepit/field/field.h>
 
@@ -140,4 +140,4 @@ class SplitOperator : public Operator {
 #define STEPIT_REGISTER_FIELD_OPERATOR(name, priority, factory) \
   static ::stepit::field::Operator::Registration _field_operation_##name##_registration(#name, priority, factory)
 
-#endif  // STEPIT_FIELD_OPERATION_H_
+#endif  // STEPIT_FIELD_OPERATOR_H_
