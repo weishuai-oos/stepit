@@ -5,6 +5,11 @@ StepIt plugin for motion-tracking related modules in the neuro policy pipeline.
 ### Prerequisites
 
 Install the [Pinocchio](https://github.com/stack-of-tasks/pinocchio) library according to the [official guide](https://stack-of-tasks.github.io/pinocchio/download.html).
+If ROS is installed, Pinocchio can be installed via `apt`:
+
+```shell
+sudo apt install ros-${ROS_DISTRO}-pinocchio
+```
 
 ### Provided Factories
 
