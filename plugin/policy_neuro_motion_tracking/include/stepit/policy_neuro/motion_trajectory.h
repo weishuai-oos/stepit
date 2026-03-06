@@ -1,4 +1,7 @@
-#include <map>
+#ifndef STEPIT_NEURO_POLICY_MOTION_TRAJECTORY_H_
+#define STEPIT_NEURO_POLICY_MOTION_TRAJECTORY_H_
+
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -19,11 +22,16 @@ class MotionTrajectory : public Module {
   NpzReader npz_;
   std::size_t num_frames_{};
   std::vector<std::string> key_names_;
+  std::vector<std::size_t> frame_sizes_;
+  std::vector<std::vector<std::int64_t>> frame_offsets_;
+  FieldIdVec field_ids_;
   std::vector<std::string> field_names_;
   std::vector<std::size_t> field_sizes_;
-  FieldIdVec field_ids_;
+  std::vector<ArrXf> field_buffers_;
 
   std::size_t frame_idx_{};
 };
 }  // namespace neuro_policy
 }  // namespace stepit
+
+#endif  // STEPIT_NEURO_POLICY_MOTION_TRAJECTORY_H_

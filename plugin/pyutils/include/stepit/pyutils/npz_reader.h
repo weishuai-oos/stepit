@@ -1,3 +1,6 @@
+#ifndef STEPIT_PYUTILS_NPZ_READER_H_
+#define STEPIT_PYUTILS_NPZ_READER_H_
+
 #include <cstring>
 #include <string>
 #include <vector>
@@ -28,6 +31,16 @@ struct NdArray {
   const T *data() const {
     return reinterpret_cast<const T *>(ptr);
   }
+
+  template <typename T>
+  Eigen::Map<Eigen::Array<T, -1, 1>> segment(std::size_t offset, std::size_t size) {
+    return Eigen::Map<Eigen::Array<T, -1, 1>>(data<T>() + offset, size, 1);
+  }
+
+  template <typename T>
+  Eigen::Map<const Eigen::Array<T, -1, 1>> segment(std::size_t offset, std::size_t size) const {
+    return Eigen::Map<const Eigen::Array<T, -1, 1>>(data<T>() + offset, size, 1);
+  }
 };
 
 class NpzReader {
@@ -49,3 +62,5 @@ class NpzReader {
   std::vector<NdArray> values_;
 };
 }  // namespace stepit
+
+#endif  // STEPIT_PYUTILS_NPZ_READER_H_
