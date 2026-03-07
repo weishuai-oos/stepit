@@ -1,6 +1,12 @@
-current_pos_name: base_global_pos  # [Optional] String, the name of the current position
 current_ori_name: base_global_ori  # [Optional] String, the name of the current orientation
+current_pos_name: base_global_pos  # [Optional] String, the name of the current position
 
-target_pos_name: base_target_pos   # [Optional] String, the name of the target position.
-                                   #   Leave empty to disable target position alignment.
 target_ori_name: base_target_ori   # [Optional] String, the name of the target orientation
+                                   #   If provided as multiple frames, the dimension of the target orientation will be N * 4
+target_pos_name: base_target_pos   # [Optional] String, the name of the target position
+                                   #   If provided as multiple frames, the dimension of the target position will be N * 3
+                                   #   Leave empty to disable target position alignment; `aligned_target_pos`
+                                   #     will still be published as an all-zero tensor with dimension N * 3.
+
+reference_index: 0                 # [Optional] Int, target frame index used to initialize alignment
+                                   #   Negative values are allowed, e.g. -1 means the last frame

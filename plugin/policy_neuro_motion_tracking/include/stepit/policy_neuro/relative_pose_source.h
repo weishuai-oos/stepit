@@ -10,6 +10,7 @@ enum class Rotation6dOrder { kRowMajor, kColumnMajor };
 class RelativeOriSource : public Module {
  public:
   RelativeOriSource(const NeuroPolicySpec &, const ModuleSpec &module_spec);
+  void init() override;
   bool update(const LowState &, ControlRequests &, FieldMap &context) override;
 
  protected:
@@ -20,11 +21,13 @@ class RelativeOriSource : public Module {
   FieldId relative_ori_id_{};
   FieldId relative_ori_6d_id_{};
   Rotation6dOrder rot6d_order_{Rotation6dOrder::kRowMajor};
+  std::size_t num_frames_{};
 };
 
 class RelativePosSource : public Module {
  public:
   RelativePosSource(const NeuroPolicySpec &, const ModuleSpec &module_spec);
+  void init() override;
   bool update(const LowState &, ControlRequests &, FieldMap &context) override;
 
  protected:
@@ -35,11 +38,13 @@ class RelativePosSource : public Module {
   FieldId target_pos_id_{};
   FieldId current_ori_id_{};
   FieldId relative_pos_id_{};
+  std::size_t num_frames_{};
 };
 
 class MotionAlignment : public Module {
  public:
   MotionAlignment(const NeuroPolicySpec &, const ModuleSpec &module_spec);
+  void init() override;
   bool reset() override;
   bool update(const LowState &, ControlRequests &, FieldMap &context) override;
 
@@ -54,8 +59,11 @@ class MotionAlignment : public Module {
   FieldId target_ori_id_{};
   FieldId aligned_target_pos_id_{};
   FieldId aligned_target_ori_id_{};
+  std::size_t num_frames_{};
+  int reference_index_{};
+  std::size_t resolved_reference_index_{};
 
-  bool initialized_{};
+  bool aligned_{};
   Quatf world_to_init_yaw_;
   Vec3f world_to_init_pos_;
 };
