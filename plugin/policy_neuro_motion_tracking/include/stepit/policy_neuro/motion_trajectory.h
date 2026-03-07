@@ -2,11 +2,12 @@
 #define STEPIT_NEURO_POLICY_MOTION_TRAJECTORY_H_
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
+#include <stepit/field/data_loader.h>
 #include <stepit/policy_neuro/module.h>
-#include <stepit/pyutils/npz_reader.h>
 
 namespace stepit {
 namespace neuro_policy {
@@ -18,8 +19,8 @@ class MotionTrajectory : public Module {
   bool update(const LowState &low_state, ControlRequests &requests, FieldMap &context) override;
 
  private:
-  std::string npz_filename_;
-  NpzReader npz_;
+  std::string path_;
+  std::unique_ptr<field::DataLoader> data_;
   std::size_t num_frames_{};
   std::vector<std::string> key_names_;
   std::vector<std::size_t> frame_sizes_;

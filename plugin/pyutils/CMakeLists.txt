@@ -20,6 +20,8 @@ stepit_add_plugin(${PROJECT_NAME}
       -Wall -Wextra -Wpedantic -Wno-unused-parameter
     LINK_LIBS
       pybind11::embed
+    DEPENDS
+      field_base
 )
 
 stepit_add_executable(npz_info app/npz_info.cpp)

@@ -13,7 +13,7 @@ int main(int argc, char **argv) {
   }
 
   try {
-    NpzReader npz(argv[1]);
+    field::NpzReader npz(argv[1]);
 
     std::size_t max_name_len       = 4;
     std::size_t max_shape_len      = 5;

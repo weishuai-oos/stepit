@@ -88,6 +88,19 @@ template <typename T>
 T product(const std::vector<T> &vec) {
   return std::accumulate(vec.begin(), vec.end(), static_cast<T>(1), std::multiplies<>());
 }
+
+inline std::string trim(const std::string &value) {
+  std::size_t first = 0;
+  while (first < value.size() and std::isspace(static_cast<unsigned char>(value[first]))) {
+    ++first;
+  }
+
+  std::size_t last = value.size();
+  while (last > first and std::isspace(static_cast<unsigned char>(value[last - 1]))) {
+    --last;
+  }
+  return value.substr(first, last - first);
+}
 }  // namespace stepit
 
 #ifdef STEPIT_FIX_GETTID

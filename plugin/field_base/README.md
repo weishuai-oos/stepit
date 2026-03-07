@@ -1,9 +1,10 @@
 # field_base
 
-StepIt plugin providing foundational field registry and generic field operators.
+StepIt plugin providing foundational field registry, generic field operators and data loading.
 
 ### Provided Interfaces
 
+- `stepit::field::DataLoader`: abstract keyed `NdArray` loader.
 - `stepit::field::Operator`: abstract field-processing unit.
 
 ### Provided Factories

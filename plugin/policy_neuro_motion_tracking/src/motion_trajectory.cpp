@@ -9,17 +9,19 @@ namespace stepit {
 namespace neuro_policy {
 MotionTrajectory::MotionTrajectory(const NeuroPolicySpec &policy_spec, const ModuleSpec &module_spec)
     : Module(policy_spec, ModuleSpec(module_spec, "motion_trajectory")) {
-  npz_filename_ = yml::readIf<std::string>(config_, "npz_filename", name_ + ".npz");
-  STEPIT_ASSERT(not npz_filename_.empty(), "'npz_filename' cannot be empty.");
-  npz_.readFile((npz_filename_[0] == '/') ? npz_filename_ : joinPaths(policy_spec.home_dir, npz_filename_));
+  path_ = yml::readIf<std::string>(config_, "path", name_);
+  STEPIT_ASSERT(not path_.empty(), "'path' cannot be empty.");
+  path_ = (path_[0] == '/') ? path_ : joinPaths(policy_spec.home_dir, path_);
+
+  auto dataloader_factory = yml::readIf<std::string>(config_, "dataloader_factory", "");
+  data_                   = DataLoader::make(dataloader_factory, path_);
 
   auto default_offsets = yml::readIf(config_, "offsets", std::vector<std::int64_t>{0});
   STEPIT_ASSERT(not default_offsets.empty(), "'offsets' cannot be empty.");
 
-  if (npz_.hasKey("fps")) {
-    const auto &fps = npz_["fps"];
-    STEPIT_ASSERT(fps.shape.size() == 0 or (fps.shape.size() == 1 and fps.shape[0] == 1),
-                  "Expected 'fps' in '{}' to be a scalar.", npz_filename_);
+  if (data_->hasKey("fps")) {
+    const auto &fps = (*data_)["fps"];
+    STEPIT_ASSERT(product(fps.shape) == 1, "Expected 'fps' in '{}' to contain exactly one element.", path_);
     std::size_t fps_value = 0;
     if (fps.dtype == "float64") {
       fps_value = static_cast<std::size_t>(std::round(*fps.data<double>()));
@@ -31,10 +33,10 @@ MotionTrajectory::MotionTrajectory(const NeuroPolicySpec &policy_spec, const Mod
       fps_value = static_cast<std::size_t>(*fps.data<int64_t>());
     } else {
       STEPIT_THROW("Expected 'fps' in '{}' to have dtype 'float32', 'float64', 'int32', or 'int64', but got '{}'.",
-                   npz_filename_, fps.dtype);
+                   path_, fps.dtype);
     }
     STEPIT_ASSERT(fps_value == policy_spec.control_freq,
-                  "FPS in '{}' ({}) does not match control frequency in policy spec ({}).", npz_filename_, fps_value,
+                  "FPS in '{}' ({}) does not match control frequency in policy spec ({}).", path_, fps_value,
                   policy_spec.control_freq);
   }
 
@@ -46,9 +48,9 @@ MotionTrajectory::MotionTrajectory(const NeuroPolicySpec &policy_spec, const Mod
     auto key_name   = yml::readAs<std::string>(node, "key");
     auto offsets    = yml::readIf(node, "offsets", default_offsets);
     STEPIT_ASSERT(not offsets.empty(), "Offsets for field '{}' cannot be empty.", field_name);
-    STEPIT_ASSERT(npz_.hasKey(key_name), "Key '{}' not found in '{}'.", key_name, npz_filename_);
+    STEPIT_ASSERT(data_->hasKey(key_name), "Key '{}' not found in '{}'.", key_name, path_);
 
-    const auto &array = npz_[key_name];
+    const auto &array = (*data_)[key_name];
     const auto &shape = array.shape;
     STEPIT_ASSERT(shape.size() >= 1, "Expected array for key '{}' to have at least 1 dimension.", key_name);
     STEPIT_ASSERT(array.dtype == "float32" or array.dtype == "float64",
@@ -56,7 +58,7 @@ MotionTrajectory::MotionTrajectory(const NeuroPolicySpec &policy_spec, const Mod
     if (num_frames_ == 0) {
       num_frames_ = shape[0];
     } else if (num_frames_ != shape[0]) {
-      STEPIT_THROW("Arrays in '{}' have different frame counts.", npz_filename_);
+      STEPIT_THROW("Arrays in '{}' have different frame counts.", path_);
     }
 
     std::size_t frame_size = std::accumulate(shape.begin() + 1, shape.end(), 1UL, std::multiplies<std::size_t>());
@@ -77,9 +79,8 @@ MotionTrajectory::MotionTrajectory(const NeuroPolicySpec &policy_spec, const Mod
     field_buffers_.emplace_back(static_cast<Eigen::Index>(field_size));
   }
 
-  STEPIT_ASSERT(num_frames_ > 0, "Loaded trajectory '{}' with 0 frames.", npz_filename_);
-  STEPIT_DBUG("Loaded motion trajectory with {} frames and {} fields from '{}'.", num_frames_, field_names_.size(),
-              npz_filename_);
+  STEPIT_ASSERT(num_frames_ > 0, "Loaded trajectory '{}' with 0 frames.", path_);
+  STEPIT_DBUG("Loaded trajectory with {} frames and {} fields from '{}'.", num_frames_, field_names_.size(), path_);
 }
 
 bool MotionTrajectory::reset() {
@@ -97,7 +98,7 @@ bool MotionTrajectory::update(const LowState &low_state, ControlRequests &reques
     const auto frame_idx     = static_cast<std::int64_t>(frame_idx_);
     const auto max_frame_idx = static_cast<std::int64_t>(num_frames_ - 1);
 
-    const auto &array = npz_[key];
+    const auto &array = (*data_)[key];
     auto &buffer      = field_buffers_[i];
 
     Eigen::Index buffer_offset = 0;
