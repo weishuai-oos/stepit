@@ -45,26 +45,28 @@ void CmdVelSubscriber::exit() {
 
 void CmdVelSubscriber::callback(const ros::MessageEvent<const topic_tools::ShapeShifter> &event) {
   if (not subscriber_enabled_.load(std::memory_order_acquire)) return;
-  auto msg = event.getMessage();
+  auto raw_msg = event.getMessage();
   std::lock_guard<std::mutex> lock(mutex_);
-  if (msg->getDataType() == "geometry_msgs/Twist") {
-    auto t_msg     = msg->instantiate<geometry_msgs::Twist>();
-    cmd_vel_msg_   = *t_msg;
+  if (raw_msg->getDataType() == "geometry_msgs/Twist") {
+    auto msg       = raw_msg->instantiate<geometry_msgs::Twist>();
+    cmd_vel_msg_   = *msg;
     cmd_vel_stamp_ = ros::Time::now();
-  } else if (msg->getDataType() == "geometry_msgs/TwistStamped") {
-    auto ts_msg    = msg->instantiate<geometry_msgs::TwistStamped>();
-    cmd_vel_msg_   = ts_msg->twist;
-    cmd_vel_stamp_ = ts_msg->header.stamp;
+  } else if (raw_msg->getDataType() == "geometry_msgs/TwistStamped") {
+    auto msg       = raw_msg->instantiate<geometry_msgs::TwistStamped>();
+    cmd_vel_msg_   = msg->twist;
+    cmd_vel_stamp_ = msg->header.stamp;
   } else {
     subscriber_enabled_.store(false, std::memory_order_relaxed);
-    STEPIT_WARN("CmdVelSubscriber received a message with unsupported type '{}'.", msg->getDataType());
+    STEPIT_WARN("CmdVelSubscriber received a message with unsupported type '{}'.", raw_msg->getDataType());
   }
 }
 
 void CmdVelSubscriber::handleControlRequest(ControlRequest request) {
   switch (lookupAction(request.action(), kSubscriberActionMap)) {
-    case SubscriberAction::kEnableSubscriber:
+    case SubscriberAction::kEnableSubscriber: {
+      std::lock_guard<std::mutex> lock(mutex_);
       cmd_vel_msg_ = {};
+    }
       subscriber_enabled_.store(true, std::memory_order_release);
       request.response(kSuccess);
       STEPIT_LOG(kStartSubscribingTemplate, "command velocity");

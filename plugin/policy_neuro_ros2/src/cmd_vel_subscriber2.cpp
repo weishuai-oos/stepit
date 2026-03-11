@@ -33,12 +33,14 @@ bool CmdVelSubscriber2::reset() {
 
 void CmdVelSubscriber2::twistCallback(const geometry_msgs::msg::Twist::SharedPtr msg) {
   if (not subscriber_enabled_.load(std::memory_order_acquire)) return;
+  std::lock_guard<std::mutex> lock(mutex_);
   cmd_vel_msg_   = *msg;
   cmd_vel_stamp_ = getNode()->now();
 }
 
 void CmdVelSubscriber2::twistStampedCallback(const geometry_msgs::msg::TwistStamped::SharedPtr msg) {
   if (not subscriber_enabled_.load(std::memory_order_acquire)) return;
+  std::lock_guard<std::mutex> lock(mutex_);
   cmd_vel_msg_   = msg->twist;
   cmd_vel_stamp_ = msg->header.stamp;
 }
@@ -46,10 +48,15 @@ void CmdVelSubscriber2::twistStampedCallback(const geometry_msgs::msg::TwistStam
 bool CmdVelSubscriber2::update(const LowState &low_state, ControlRequests &requests, FieldMap &context) {
   bool subscriber_enabled = subscriber_enabled_.load(std::memory_order_acquire);
   subscribing_status_->update(subscriber_enabled ? 1 : 0);
-  if (subscriber_enabled and getElapsedTime(cmd_vel_stamp_) < timeout_threshold_) {
-    target_cmd_vel_.x() = static_cast<float>(cmd_vel_msg_.linear.x);
-    target_cmd_vel_.y() = static_cast<float>(cmd_vel_msg_.linear.y);
-    target_cmd_vel_.z() = static_cast<float>(cmd_vel_msg_.angular.z);
+  if (subscriber_enabled) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (getElapsedTime(cmd_vel_stamp_) < timeout_threshold_) {
+      target_cmd_vel_.x() = static_cast<float>(cmd_vel_msg_.linear.x);
+      target_cmd_vel_.y() = static_cast<float>(cmd_vel_msg_.linear.y);
+      target_cmd_vel_.z() = static_cast<float>(cmd_vel_msg_.angular.z);
+    } else {
+      target_cmd_vel_.setZero();
+    }
   } else {
     target_cmd_vel_.setZero();
   }
@@ -63,8 +70,10 @@ void CmdVelSubscriber2::exit() {
 
 void CmdVelSubscriber2::handleControlRequest(ControlRequest request) {
   switch (lookupAction(request.action(), kSubscriberActionMap)) {
-    case SubscriberAction::kEnableSubscriber:
+    case SubscriberAction::kEnableSubscriber: {
+      std::lock_guard<std::mutex> lock(mutex_);
       cmd_vel_msg_ = geometry_msgs::msg::Twist();
+    }
       subscriber_enabled_.store(true, std::memory_order_release);
       request.response(kSuccess);
       STEPIT_LOG(kStartSubscribingTemplate, "command velocity");

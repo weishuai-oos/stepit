@@ -1,6 +1,8 @@
 #ifndef STEPIT_NEURO_POLICY_ROS2_CMD_VEL_SUBSCRIBER2_H_
 #define STEPIT_NEURO_POLICY_ROS2_CMD_VEL_SUBSCRIBER2_H_
 
+#include <mutex>
+
 #include <geometry_msgs/msg/twist.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -20,6 +22,7 @@ class CmdVelSubscriber2 : public CmdVelSource {
   void twistCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
   void twistStampedCallback(const geometry_msgs::msg::TwistStamped::SharedPtr msg);
 
+  std::mutex mutex_;
   rclcpp::SubscriptionBase::SharedPtr cmd_vel_sub_{nullptr};
   float timeout_threshold_{0.1F};
   bool default_subscriber_enabled_{false};

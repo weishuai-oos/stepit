@@ -188,6 +188,7 @@ void HeightmapSubscriber2::gridMapCallback(const grid_map_msgs::msg::GridMap::Sh
   std::lock_guard<std::mutex> lock(msg_mtx_);
   grid_map::GridMapRosConverter::fromMessage(*msg, map_msg_);
   map_info_     = msg->info;
+  map_stamp_    = msg->header.stamp;
   map_received_ = true;
 }
 
