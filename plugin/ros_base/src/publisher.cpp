@@ -13,10 +13,11 @@ RosPublisher::RosPublisher() {
 }
 
 void RosPublisher::publishStatus() {
+  auto statuses     = getStatusSnapshot();
   status_msg_.level = diagnostic_msgs::DiagnosticStatus::OK;
   status_msg_.name  = "stepit";
   status_msg_.values.clear();
-  for (const auto &item : named_status_) {
+  for (const auto &item : statuses) {
     diagnostic_msgs::KeyValue kv_msg;
     kv_msg.key   = item.first;
     kv_msg.value = item.second;

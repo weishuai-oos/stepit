@@ -433,7 +433,7 @@ Agent::State Agent::eventPolicy() {
     }
     policy_timer_.clear();
     setActive();
-    STEPIT_LOG("Policy started.");
+    STEPIT_LOG("Policy '{}' started.", active_policy_->getName());
   }
   std::size_t ratio = std::max(
       static_cast<std::size_t>(std::round(static_cast<double>(getCommunicationFreq()) /
@@ -458,15 +458,13 @@ bool Agent::selectPolicy(const std::string &name) {
 
 bool Agent::selectPolicy(std::size_t index) {
   if (index >= policies_.size()) return false;
+  if (active_policy_idx_ == index) return true;
+  if (curr_state_ == State::kPolicy) {
+    onExit(State::kPolicy);
+    state_tick_ = 0;
+  }
   active_policy_idx_ = index;
   active_policy_     = policies_[index].get();
-  if (curr_state_ == State::kPolicy) {
-    if (policy_timer_.count() > 0) {
-      STEPIT_LOG("Average policy time: {}.", policy_timer_.mean<USec>());
-      policy_timer_.clear();
-    }
-    active_policy_->reset();
-  }
   STEPIT_LOG("Switch current policy to '{}'.", active_policy_->getName());
   return true;
 }

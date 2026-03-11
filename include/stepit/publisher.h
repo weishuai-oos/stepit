@@ -14,8 +14,10 @@ class Publisher : public Interface<Publisher> {
   static Publisher &instance();
 
   bool hasStatus(const std::string &name) const;
+  void registerStatus(const std::string &name);
   void updateStatus(const std::string &name, const std::string &value);
   void removeStatus(const std::string &name);
+  std::map<std::string, std::string> getStatusSnapshot() const;
 
   virtual void publishStatus() {}
   virtual void publishLowLevel(const RobotSpec &spec, const LowState &state, const LowCmd &cmd) {}

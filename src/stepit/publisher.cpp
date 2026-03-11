@@ -11,6 +11,12 @@ bool Publisher::hasStatus(const std::string &name) const {
   return named_status_.find(name) != named_status_.end();
 }
 
+void Publisher::registerStatus(const std::string &name) {
+  std::lock_guard<std::mutex> lock(status_mutex_);
+  auto result = named_status_.emplace(name, std::string{});
+  STEPIT_ASSERT(result.second, "Status '{}' is already registered.", name);
+}
+
 void Publisher::updateStatus(const std::string &name, const std::string &value) {
   std::lock_guard<std::mutex> lock(status_mutex_);
   named_status_[name] = value;
@@ -19,6 +25,11 @@ void Publisher::updateStatus(const std::string &name, const std::string &value) 
 void Publisher::removeStatus(const std::string &name) {
   std::lock_guard<std::mutex> lock(status_mutex_);
   named_status_.erase(name);
+}
+
+std::map<std::string, std::string> Publisher::getStatusSnapshot() const {
+  std::lock_guard<std::mutex> lock(status_mutex_);
+  return named_status_;
 }
 
 namespace publisher {
@@ -30,9 +41,7 @@ Filter::Filter() {
 
 const Filter g_filter;
 
-StatusRegistration::StatusRegistration(const std::string &name) : name_(name) {
-  STEPIT_ASSERT(not hasStatus(name_), "Status '{}' is already registered.", name_);
-}
+StatusRegistration::StatusRegistration(const std::string &name) : name_(name) { publisher().registerStatus(name_); }
 
 StatusRegistration::~StatusRegistration() {
   if (not name_.empty()) removeStatus(name_);
@@ -44,6 +53,7 @@ StatusRegistration::StatusRegistration(StatusRegistration &&other) noexcept : na
 
 StatusRegistration &StatusRegistration::operator=(StatusRegistration &&other) noexcept {
   if (this != &other) {
+    if (not name_.empty()) removeStatus(name_);
     name_ = std::move(other.name_);
     other.name_.clear();
   }
