@@ -16,7 +16,7 @@ class ForwardKinematics : public Module {
   bool update(const LowState &low_state, ControlRequests &, FieldMap &context) override;
 
  private:
-  std::string urdf_filename_;
+  std::string urdf_path_;
   pinocchio::Model model_;
   pinocchio::Data data_;
   std::vector<std::string> body_names_;

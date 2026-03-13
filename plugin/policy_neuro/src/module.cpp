@@ -13,15 +13,15 @@ std::string getSubstrBeforeSlash(const std::string &input) {
 }  // namespace
 
 Module::Module(const NeuroPolicySpec &policy_spec, const ModuleSpec &module_spec)
-    : name_(module_spec.name), config_filename_(getSubstrBeforeSlash(name_) + ".yml"), config_(module_spec.config) {
+    : name_(module_spec.name), config_path_(getSubstrBeforeSlash(name_) + ".yml"), config_(module_spec.config) {
   STEPIT_ASSERT(not name_.empty(), "Module name should not be empty.");
-  std::string config_path = joinPaths(policy_spec.home_dir, config_filename_);
+  config_path_ = joinPaths(policy_spec.home_dir, config_path_);
   if (not config_.hasValue()) {
-    if (fs::exists(config_path)) {
-      STEPIT_DBUGNT("Loading configuration for module '{}' from '{}'.", name_, config_path);
-      config_ = yml::loadFile(config_path);
+    if (fs::exists(config_path_)) {
+      STEPIT_DBUGNT("Loading configuration for module '{}' from '{}'.", name_, config_path_);
+      config_ = yml::loadFile(config_path_);
     } else {
-      STEPIT_DBUGNT("No configuration found for module '{}' at '{}'. Using empty configuration.", name_, config_path);
+      STEPIT_DBUGNT("No configuration found for module '{}' at '{}'. Using empty configuration.", name_, config_path_);
     }
   }
 }

@@ -4,7 +4,7 @@
 namespace stepit::neuro_policy {
 FieldSubscriber2::FieldSubscriber2(const NeuroPolicySpec &policy_spec, const ModuleSpec &module_spec)
     : Module(policy_spec, ModuleSpec(module_spec, "field_subscriber")) {
-  STEPIT_ASSERT(config_.isMap(), "'{}' must contain a map of field configurations.", config_filename_);
+  config_.assertMap();
   using std_msgs::msg::Float32MultiArray;
   for (const auto &field_node : config_) {
     FieldData field;

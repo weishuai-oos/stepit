@@ -41,7 +41,7 @@ class Module : public Node,
  protected:
   Module(const NeuroPolicySpec &policy_spec, const ModuleSpec &module_spec);
 
-  const std::string name_, config_filename_;
+  std::string name_, config_path_;
   yml::Node config_;
 };
 

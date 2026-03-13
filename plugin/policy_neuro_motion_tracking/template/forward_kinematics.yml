@@ -1,4 +1,4 @@
-urdf_filename: "robot.urdf"   # String, URDF filename of the robot.
+urdf_path: "robot.urdf"       # String, URDF filename of the robot.
                               #  Relative paths are resolved against this config directory.
 
 body_names:                   # [Optional] List[String], body frame names to export.
