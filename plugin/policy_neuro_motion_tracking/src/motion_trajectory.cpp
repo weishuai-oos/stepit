@@ -25,8 +25,8 @@ MotionTrajectory::MotionTrajectory(const NeuroPolicySpec &policy_spec, const Mod
   field_nodes.assertSequence();
   for (const auto &node : field_nodes) {
     FieldView field_spec;
+    field_spec.offsets = default_offsets;
     initField(node, field_spec);
-    if (field_spec.offsets.empty()) field_spec.offsets = default_offsets;
     fields_.push_back(std::move(field_spec));
   }
 
@@ -96,8 +96,9 @@ void MotionTrajectory::initField(const yml::Node &node, FieldView &field) {
     }
   }
 
-  node["offsets"].to(field.offsets, true);
-  STEPIT_ASSERT(not field.offsets.empty(), "Offsets for field '{}' cannot be empty.", name);
+  std::vector<std::int64_t> offsets;
+  node["offsets"].to(offsets, true);
+  if (not offsets.empty()) field.offsets = offsets;
   field.frame_size = indices.size();
   field.field_size = field.frame_size * field.offsets.size();
   if (node["size"].hasValue()) {
