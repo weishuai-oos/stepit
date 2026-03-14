@@ -39,23 +39,31 @@ operators:
     target: action_pos_copy      # String, target field name
 
   - type: masked_fill            # Literal["masked_fill"]
-    # Field selection
+    # ------------- Field selection -------------
     # Option 1: In-place masked fill
     field: joint_vel             # In-place masked fill for existing field
     # Option 2: Source-target masked fill
     # source: joint_vel          # [Optional] String, source field name
     # target: joint_vel_masked   # [Optional] String, target field name
-    indices: [ 4, 5, 10, 11 ]    # List[Int], indices to fill
-    value: 0.0                   # [Optional] Float, fill value, defaults to 0.0
-
-  - type: slice                  # Literal["slice"]
-    source: proprioception       # String, source field name
-    target: gravity_copy         # String, target field name
+    # ------------ Mask specification ------------
     # Option 1: specify indices by start / end
     start: 0                     # Int, inclusive start index when indices is not provided
     end: 3                       # Int, exclusive end index when indices is not provided
     # Option 2: specify explicit indices
     # indices: [ 0, 1, 2 ]       # List[Int], explicit index selection
+    # --------------------------------------------
+    value: 0.0                   # [Optional] Float, fill value, defaults to 0.0
+
+  - type: slice                  # Literal["slice"]
+    source: proprioception       # String, source field name
+    target: gravity_copy         # String, target field name
+    # ------------ Mask specification ------------
+    # Option 1: specify indices by start / end
+    start: 0                     # Int, inclusive start index when indices is not provided
+    end: 3                       # Int, exclusive end index when indices is not provided
+    # Option 2: specify explicit indices
+    # indices: [ 0, 1, 2 ]       # List[Int], explicit index selection
+    # --------------------------------------------
 
   - type: history                # Literal["history"]
     source: joint_pos            # String, source field name

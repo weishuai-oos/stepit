@@ -253,20 +253,7 @@ MaskedFillOperator::MaskedFillOperator(const yml::Node &config) {
     source_id_       = registerRequirement(source_name);
     target_id_       = registerProvision(target_name, 0);
   }
-
-  if (config["indices"].hasValue()) {
-    const auto indices_node = config["indices"];
-    STEPIT_ASSERT(indices_node.isSequence() and indices_node.size() > 0,
-                  "'indices' in masked_fill op must be a non-empty sequence.");
-    for (const auto &index_node : indices_node) {
-      indices_.push_back(index_node.as<FieldSize>());
-    }
-  } else {
-    auto start = config["start"].as<FieldSize>();
-    auto end   = config["end"].as<FieldSize>();
-    STEPIT_ASSERT(end > start, "Slice range [start={}, end={}) is invalid.", start, end);
-    for (FieldSize i{start}; i < end; ++i) indices_.push_back(i);
-  }
+  config.to(indices_);
   config["value"].to(value_, true);
 
   try {
@@ -277,10 +264,7 @@ MaskedFillOperator::MaskedFillOperator(const yml::Node &config) {
 void MaskedFillOperator::init() {
   if (field_size_ > 0) return;
   field_size_ = getFieldSize(source_id_);
-  for (auto index : indices_) {
-    STEPIT_ASSERT(index < field_size_, "masked_fill index {} is out of range [0, {}) for '{}'.", index, field_size_,
-                  getFieldName(source_id_));
-  }
+  indices_.canonicalize(field_size_);
   setFieldSize(target_id_, field_size_);
   buffer_.resize(field_size_);
 }
@@ -295,33 +279,21 @@ bool MaskedFillOperator::update(FieldMap &context) {
 }
 
 SliceOperator::SliceOperator(const yml::Node &config) {
-  STEPIT_ASSERT(config["source"].hasValue() and config["target"].hasValue(),
-                "Slice op must contain 'source' and 'target'.");
-
-  if (config["indices"].hasValue()) {
-    const auto indices_node = config["indices"];
-    STEPIT_ASSERT(indices_node.isSequence() and indices_node.size() > 0,
-                  "'indices' in slice op must be a non-empty sequence.");
-    for (const auto &index_node : indices_node) {
-      indices_.push_back(index_node.as<FieldSize>());
-    }
-  } else {
-    auto start = config["start"].as<FieldSize>();
-    auto end   = config["end"].as<FieldSize>();
-    STEPIT_ASSERT(end > start, "Slice range [start={}, end={}) is invalid.", start, end);
-    for (FieldSize i{start}; i < end; ++i) indices_.push_back(i);
-  }
-
+  config.throwUnless(config["source"].hasValue() and config["target"].hasValue(),
+                     "Slice op must contain 'source' and 'target'.");
   source_id_ = registerRequirement(config["source"].as<std::string>());
-  target_id_ = registerProvision(config["target"].as<std::string>(), static_cast<FieldSize>(indices_.size()));
+  target_id_ = registerProvision(config["target"].as<std::string>(), 0);
+  config.to(indices_);
+
+  try {
+    init();
+  } catch (const UndefinedFieldSizeError &) {}
 }
 
 void SliceOperator::init() {
   auto source_size = getFieldSize(source_id_);
-  for (auto index : indices_) {
-    STEPIT_ASSERT(index < source_size, "Slice index {} is out of range [0, {}) for '{}'.", index, source_size,
-                  getFieldName(source_id_));
-  }
+  indices_.canonicalize(source_size);
+  setFieldSize(target_id_, static_cast<FieldSize>(indices_.size()));
   buffer_.resize(getFieldSize(target_id_));
 }
 

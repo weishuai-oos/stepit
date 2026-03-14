@@ -103,7 +103,7 @@ class MaskedFillOperator : public Operator {
   FieldId source_id_{};
   FieldId target_id_{};
   FieldSize field_size_{};
-  std::vector<FieldSize> indices_;
+  yml::Indices indices_;
   float value_{};
   ArrXf buffer_;
 };
@@ -118,7 +118,7 @@ class SliceOperator : public Operator {
  private:
   FieldId source_id_{};
   FieldId target_id_{};
-  std::vector<FieldSize> indices_;
+  yml::Indices indices_;
   ArrXf buffer_;
 };
 
