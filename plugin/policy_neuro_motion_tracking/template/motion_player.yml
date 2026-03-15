@@ -1,4 +1,4 @@
-path: "motion_trajectory.npz"          # String, motion source path.
+path: "motion.npz"                     # String, motion source path.
 dataloader_factory: "npz"              # [Optional] String, dataloader factory to use for loading the motion source.
 offsets: [0]                           # [Optional] Sequence[Int], frame offsets to stack for every field by default.
                                        #   Values are relative to the current frame and clamped to valid bounds.

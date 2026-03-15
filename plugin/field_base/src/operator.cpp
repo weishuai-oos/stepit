@@ -280,7 +280,7 @@ bool MaskedFillOperator::update(FieldMap &context) {
 
 SliceOperator::SliceOperator(const yml::Node &config) {
   config.throwUnless(config["source"].hasValue() and config["target"].hasValue(),
-                     "Slice op must contain 'source' and 'target'.");
+                     "Slice op must contain 'source' and 'target'");
   source_id_ = registerRequirement(config["source"].as<std::string>());
   target_id_ = registerProvision(config["target"].as<std::string>(), 0);
   config.to(indices_);
