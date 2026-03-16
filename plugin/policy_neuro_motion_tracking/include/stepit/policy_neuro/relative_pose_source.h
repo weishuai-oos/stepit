@@ -5,8 +5,6 @@
 
 namespace stepit {
 namespace neuro_policy {
-enum class Rotation6dOrder { kRowMajor, kColumnMajor };
-
 class RelativeOriSource : public Module {
  public:
   RelativeOriSource(const NeuroPolicySpec &, const ModuleSpec &module_spec);

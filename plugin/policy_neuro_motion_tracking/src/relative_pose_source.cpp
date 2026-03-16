@@ -40,17 +40,9 @@ bool RelativeOriSource::update(const LowState &, ControlRequests &, FieldMap &co
   for (std::size_t i{}; i < num_frames_; ++i) {
     Quatf target_ori(target_ori_stack.segment(4 * i, 4));
 
-    Quatf relative_ori_i           = current_ori.inverse() * target_ori;
-    relative_ori.segment(4 * i, 4) = relative_ori_i.coeffs();
-
-    Mat3f relative_rot_i = relative_ori_i.matrix();
-    if (rot6d_order_ == Rotation6dOrder::kColumnMajor) {
-      relative_ori_6d.segment(6 * i, 6) << relative_rot_i(0, 0), relative_rot_i(1, 0), relative_rot_i(2, 0),
-          relative_rot_i(0, 1), relative_rot_i(1, 1), relative_rot_i(2, 1);
-    } else {
-      relative_ori_6d.segment(6 * i, 6) << relative_rot_i(0, 0), relative_rot_i(0, 1), relative_rot_i(1, 0),
-          relative_rot_i(1, 1), relative_rot_i(2, 0), relative_rot_i(2, 1);
-    }
+    Quatf relative_ori_i              = current_ori.inverse() * target_ori;
+    relative_ori.segment(4 * i, 4)    = relative_ori_i.coeffs();
+    relative_ori_6d.segment(6 * i, 6) = relative_ori_i.rotation6d(rot6d_order_);
   }
 
   context[relative_ori_id_]    = relative_ori;

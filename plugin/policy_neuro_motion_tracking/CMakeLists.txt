@@ -9,9 +9,10 @@ endif()
 
 stepit_add_plugin(${PROJECT_NAME}
     SOURCES
+      src/forward_kinematics.cpp
+      src/geometry_operator.cpp
       src/motion_clip.cpp
       src/motion_player.cpp
-      src/forward_kinematics.cpp
       src/relative_pose_source.cpp
     INCLUDES
       include
