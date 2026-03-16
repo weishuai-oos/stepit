@@ -7,14 +7,7 @@ RelativeOriSource::RelativeOriSource(const NeuroPolicySpec &policy_spec, const M
     : Module(policy_spec, ModuleSpec(module_spec, "relative_pose/ori")) {
   current_ori_name_ = config_["current_ori_name"].as<std::string>("base_global_ori");
   target_ori_name_  = config_["target_ori_name"].as<std::string>("base_target_ori");
-  auto rot6d_order  = config_["rotation_6d_order"].as<std::string>("row_major");
-  if (rot6d_order == "row_major") {
-    rot6d_order_ = Rotation6dOrder::kRowMajor;
-  } else if (rot6d_order == "column_major") {
-    rot6d_order_ = Rotation6dOrder::kColumnMajor;
-  } else {
-    STEPIT_THROW("Unsupported 'rotation_6d_order': '{}'. Expected 'column_major' or 'row_major'.", rot6d_order);
-  }
+  rot6d_order_      = config_["rotation_6d_order"].as(Rotation6dOrder::kRowMajor);
 
   current_ori_id_     = registerRequirement(current_ori_name_, 4);
   target_ori_id_      = registerRequirement(target_ori_name_);

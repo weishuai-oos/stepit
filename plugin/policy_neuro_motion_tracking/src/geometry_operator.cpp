@@ -2,15 +2,6 @@
 
 namespace stepit {
 namespace field {
-namespace {
-Rotation6dOrder parseRotation6dOrder(const yml::Node &config) {
-  const auto order = config["rotation_6d_order"].as<std::string>("row_major");
-  if (order == "row_major") return Rotation6dOrder::kRowMajor;
-  if (order == "column_major") return Rotation6dOrder::kColumnMajor;
-  STEPIT_THROW("Unsupported 'rotation_6d_order': '{}'. Expected 'column_major' or 'row_major'.", order);
-}
-}  // namespace
-
 QuatRotateOperator::QuatRotateOperator(const yml::Node &config) {
   config.assertHasValue("source", "quaternion", "target");
   source_id_ = registerRequirement(config["source"].as<std::string>());
@@ -209,7 +200,7 @@ QuatToRotation6dOperator::QuatToRotation6dOperator(const yml::Node &config) {
   config.assertHasValue("source", "target");
   source_id_ = registerRequirement(config["source"].as<std::string>());
   target_id_ = registerProvision(config["target"].as<std::string>(), 0);
-  order_     = parseRotation6dOrder(config);
+  order_     = config["rotation_6d_order"].as(Rotation6dOrder::kRowMajor);
 
   try {
     init();
