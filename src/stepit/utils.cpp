@@ -23,11 +23,13 @@ const std::vector<std::string> &getConfigSearchPaths() {
 yml::Node loadGlobalConfigYaml(const std::string &relative_path) {
   const auto &config_dirs = getConfigSearchPaths();
   std::string yaml_path;
+  bool found = false;
   for (const auto &config_dir : config_dirs) {
     yaml_path = relative_path.empty() ? config_dir : joinPaths(config_dir, relative_path);
-    if (fs::exists(yaml_path)) break;
+    found     = fs::exists(yaml_path);
+    if (found) break;
   }
-  STEPIT_ASSERT(not yaml_path.empty(), "File '{}' not found in {}.", relative_path, config_dirs);
+  STEPIT_ASSERT(found, "File '{}' not found in {}.", relative_path, config_dirs);
   return yml::loadFile(yaml_path);
 }
 }  // namespace stepit
