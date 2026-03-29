@@ -51,7 +51,7 @@ Options:
 	-j, --jobs N            Number of parallel jobs (default: nproc)
 	--workspace DIR         Workspace root (default: STEPIT_WS or current directory)
 	--clean                 Remove existing outputs for the selected build tool first
-	--configure             Force a fresh CMake configure step
+	--skip-configure        Skip the CMake configure step and only build/install
 	--cmake-arg ARG         Append a CMake argument (repeatable)
 	-D...                   Treat any -D... flag as --cmake-arg
 	-h, --help              Show this help message
@@ -78,7 +78,7 @@ build_tool=""
 build_type="Release"
 jobs="$(nproc 2>/dev/null || echo 4)"
 clean=false
-force_configure=false
+skip_configure=false
 cmake_args=(${STEPIT_BUILD_CMAKE_ARGS-})
 extra_args=(${STEPIT_BUILD_EXTRA_ARGS-})
 
@@ -106,8 +106,8 @@ while [[ $# -gt 0 ]]; do
 			clean=true
 			shift
 			;;
-		--configure)
-			force_configure=true
+		--skip-configure)
+			skip_configure=true
 			shift
 			;;
 		--cmake-arg)
@@ -183,15 +183,9 @@ case "$build_tool" in
 			"${extra_args[@]}"
 		)
 
-		skip_configure=false
-		if [[ "$force_configure" == false &&
-			  -f "${build_dir}/CMakeCache.txt" &&
-			  -f "${workspace_dir}/.stepit/cmake_args" ]]; then
-			last_cmake_args=$(<"${workspace_dir}/.stepit/cmake_args")
-			[[ "${cmake_args[*]}" == "$last_cmake_args" ]] && skip_configure=true
-		fi
-		if [[ "$skip_configure" == false ]]; then
-			echo "${cmake_args[*]}" > "${workspace_dir}/.stepit/cmake_args"
+		if [[ "$skip_configure" == true ]]; then
+			[[ -f "${build_dir}/CMakeCache.txt" ]] || die "--skip-configure requires ${build_dir}/CMakeCache.txt"
+		else
 			run cmake "${cmake_args[@]}"
 		fi
 
