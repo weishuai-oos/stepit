@@ -1,0 +1,58 @@
+我已经加好了：现在不是固定 field_ops.yml 给路点了，而是：
+
+  遥控器摇杆 -> cmd_vel -> waypoint_source -> waypoints_b/remain_time -> policy
+
+  改动在 StepIt：
+
+  - 新增 stepit/plugin/policy_neuro/include/stepit/policy_neuro/waypoint_source.h
+  - 新增 stepit/plugin/policy_neuro/src/waypoint_source.cpp
+  - 接入 stepit/plugin/policy_neuro/CMakeLists.txt:17
+  - 更新 stepit/policies/g1_traj_v2/policy.yml:22
+  - 新增 stepit/policies/g1_traj_v2/cmd_vel.yml:1
+  - 新增 stepit/policies/g1_traj_v2/waypoint_source.yml:1
+
+  控制逻辑：
+
+  - 左摇杆前后：vx
+  - 左摇杆左右：vy
+  - 右摇杆左右：wz
+  - RT/R2：turbo 比例
+  - waypoint_source 会按 [0.5, 1.0, 1.5, 2.0, 2.5]s 预测 5 个未来 body-frame waypoint。
+
+  我验证了新增 policy_neuro 插件能单独编译通过。
+
+  你需要重新编译 StepIt：
+
+  cd /home/xjh/workspace/stepit
+  source /opt/ros/humble/setup.bash
+
+  cmake -S . -B build \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=$PWD/install
+
+  cmake --build build -j$(nproc)
+  cmake --install build
+
+  启动 StepIt 时要加 joystick input：
+
+  ./install/bin/stepit \
+    -P ros2 \
+    -c console \
+    -c joystick \
+    -f joystick@unitree2 \
+    -r g1 \
+    -p neuro@$PWD/policies/g1_traj_v2 \
+    -- --ros-args --remap __ns:=/stepit
+
+  如果你是用 unitree_mujoco 模拟遥控器，还要把它的 simulate/config.yaml 里打开：
+
+  use_joystick: 1
+  joystick_device: "/dev/input/js0"
+
+  调试 topic：
+
+  ros2 topic echo /stepit/field/cmd_vel --once
+  ros2 topic echo /stepit/field/waypoints_b --once
+
+  如果 cmd_vel 会随摇杆变化，waypoints_b 也跟着变，就说明遥控器到路点链路通了。
+

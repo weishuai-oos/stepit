@@ -1,0 +1,53 @@
+支持高程输入，但分两种路径：
+
+  1. 当前 g1_traj_v2 配置实际走的是“外部直接给 heightmap 向量”：
+     /height_scan_array -> std_msgs/msg/Float32MultiArray -> StepIt field heightmap -> actor observation。
+     这条路径不转换成 GridMap。
+  2. StepIt 另外也有 ROS2 heightmap_subscriber，支持：
+     grid_map_msgs/msg/GridMap + 机器人定位 -> 内部 grid_map::GridMap -> 采样成 heightmap 向量给策略。
+
+
+  ## 当前 G1 策略配置 sim to sim
+
+	  在 policies/g1_traj_v2/policy.yml:23 里启用了 field_subscriber，并发布/使用 heightmap。
+	  在 policies/g1_traj_v2/field_subscriber.yml:1 里要求：
+
+	  heightmap:
+	    topic: "/height_scan_array"  (mujoco发布)
+	    size: 187
+	    timeout_threshold: 0.5
+
+	  对应代码在 plugin/policy_neuro_ros2/src/field_subscriber2.cpp:5：它订阅 std_msgs/msg/Float32MultiArray，把 msg->data 直接映射成 Eigen vector。要求是：
+
+	  - ROS2 topic 类型：std_msgs/msg/Float32MultiArray
+	  - data.size() 必须是 187
+	  - 策略启动前必须已经收到过一次，否则 reset() 失败
+	  - 超过 0.5s 没收到新数据，策略 update 失败
+	  - actor 配了 assert_all_finite: true，所以不要发 NaN/Inf
+	  - 当前采样约定来自 policies/g1_traj_v2/heightmap.yml:1：17 x 11，0.1m x 0.1m，x_major: true，也就是 187 个点
+
+	  
+
+ ## GridMap 路径 sim to real
+
+  如果你希望 StepIt 自己从 elevation map 采样，代码已经有 heightmap_subscriber，见 plugin/policy_neuro_ros2/src/heightmap_subscriber2.cpp:16。它要求：
+
+  - 地图 topic：默认 /elevation_mapping/elevation_map
+  - 地图类型：grid_map_msgs/msg/GridMap
+  - 定位来源：TF，或 PoseStamped / PoseWithCovarianceStamped / nav_msgs/Odometry
+  - 默认 elevation layer：elevation
+  - 默认 uncertainty layer：uncertainty_range
+  - map 默认超时：0.5s
+  - localization 默认超时：0.1s
+
+  这条路径会用 GridMapRosConverter::fromMessage() 转成内部 grid_map::GridMap，再按机器人当前位置和 yaw 把 17x11 局部采样点转到 map frame，采样 elevation，填成 heightmap field。actor 仍然只拿到 187 维
+  heightmap 向量，不直接拿 GridMap。
+
+  实物 G1 部署判断
+
+  robot_unitree2/g1 本身只处理 Unitree DDS 的 lowcmd/lowstate/secondary_imu，没有直接接 G1 高程/雷达/HeightMap DDS，见 plugin/robot_unitree2/src/g1.cpp:24。所以实物部署时高程要靠外部感知节点发布 ROS2
+  数据：
+
+  - 已经有 187 维局部高度采样：继续用当前 /height_scan_array。
+  - 已经有 elevation mapping 的 GridMap：改用 heightmap_subscriber，避免同时让 field_subscriber 也提供 heightmap，否则会重复 field source。
+

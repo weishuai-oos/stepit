@@ -1,0 +1,105 @@
+## 1. 导出 g1_traj_v2
+
+cd /home/xjh/workspace/MIRLab
+
+conda run -n env_isaaclab python mirlab/scripts/cusrl/export.py \
+  --task g1_traj_v2 \
+  --load_run logs/cusrl/g1_traj_v2/<你的run>/ckpt/ckpt_<best>.pt \
+  --output_dir /home/xjh/workspace/stepit/policies/g1_traj_v2 \
+  --format onnx \
+  --silent
+
+注意：不要加 `--origin_export`。默认导出会带观测归一化和动作反归一化；StepIt 的 position actuator 直接把 actor 输出当目标关节角发出去，见 /stepit/plugin/policy_neuro/src/actuator.cpp:59。如果用--origin_export，动作会变成未反归一化的网络动作，部署会错。
+
+
+## 2. 在导出目录补 StepIt 配置
+
+```bash
+cd /home/xjh/workspace/stepit/policies/g1_traj_v2/<run_name>
+```
+
+需要写这些配置：
+
+- `policy.yml`
+- `actor.yml`
+- `field_ops.yml`（可能不用了）
+- `heightmap.yml`
+- 其他需要的配置文件
+
+## 3. 编译 StepIt
+
+cd /home/xjh/workspace/stepit
+
+# 用系统 Python 重新配置,conda deactivate
+cmake -B build -S . \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX=install \
+  -DPYTHON_EXECUTABLE=/usr/bin/python3 \
+  -DPython3_EXECUTABLE=/usr/bin/python3 \
+  -DPython3_ROOT_DIR=/usr \
+  -DSTEPIT_WHITELIST_PLUGINS="control_console;joystick_base;joystick_usb;nnrt_base;nnrt_onnxruntime;policy_neuro;publisher_csv;robot_unitree2;ros2_base;policy_neuro_ros2"
+
+cmake --build build -j$(nproc)
+cmake --install build
+
+
+## 4. 启动 unitree_mujoco
+
+### 编译 unitree_mujoco ROS2 版
+
+```bash
+cd /home/xjh/workspace/unitree_mujoco
+
+# 没 source ROS 的可以 source 一下
+source /opt/ros/humble/setup.bash
+
+cd simulate
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_ROS2=ON
+cmake --build build -j$(nproc)
+```
+
+### 确认 unitree_mujoco 在发高程
+
+另开一个终端：
+
+```bash
+source /opt/ros/humble/setup.bash
+
+ros2 topic list | grep height
+ros2 topic hz /height_scan_array
+ros2 topic echo /height_scan_array --once
+```
+
+### 配置并启动仿真
+
+写 unitree_mujoco 的 `simulate/config.yaml`。
+
+```bash
+cd /simulate/build
+./unitree_mujoco
+```
+
+## 5. 启动 StepIt 控制
+
+```bash
+cd /home/xjh/workspace/stepit
+
+export STEPIT_NETIF=lo
+export STEPIT_UNITREE2_DOMAIN_ID=1
+export STEPIT_PLUGIN_DIRS=$PWD/install/lib
+export LD_LIBRARY_PATH=$PWD/install/lib:$PWD/extern/robot_sdk/unitree_sdk2/thirdparty/lib/$(uname -m):${LD_LIBRARY_PATH}
+
+./install/bin/stepit \
+  -P ros2 \
+  -c console \
+  -c joystick \
+  -f joystick@unitree2 \
+  -r g1 \
+  -p neuro@$PWD/policies/g1_traj_finetune_v2 \
+  -- --ros-args --remap __ns:=/stepit
+```
+
+启动顺序：
+
+1. `Agent/StandUp`
+2. `Agent/PolicyOn`

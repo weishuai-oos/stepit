@@ -1,0 +1,17 @@
+nnrt_factory: onnxruntime
+model_path: actor.onnx
+assert_all_finite: true
+
+input_fields:
+  observation:
+    - { name: ang_vel, size: 3 }
+    - { name: gravity, size: 3 }
+    - { name: waypoints_b, size: 15 }
+    - { name: joint_pos, size: 29 }
+    - { name: joint_vel, size: 29 }
+    - { name: action_p1, size: 29 }
+    - { name: heightmap, size: 187 }
+    - { name: remain_time, size: 5 }
+
+output_fields:
+  - { name: action, size: 29 }

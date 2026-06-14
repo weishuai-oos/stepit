@@ -17,6 +17,7 @@ stepit_add_plugin(${PROJECT_NAME}
       src/proprioceptor.cpp
       src/subscriber_action.cpp
       src/time_source.cpp
+      src/waypoint_source.cpp
     INCLUDES
       include
     FLAGS

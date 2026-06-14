@@ -1,0 +1,9 @@
+velocity_scale_factor:
+  - [0.7, 0.35]
+  - [0.25, 0.25]
+  - [0.8, 0.8]
+velocity_turbo_factor: [0.5, 0.5, 0.5]
+velocity_deadzone: 0.08
+smoothing: true
+max_acceleration: [1.0, 0.8, 1.5]
+joystick_enabled: true

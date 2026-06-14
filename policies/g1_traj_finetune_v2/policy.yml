@@ -1,0 +1,40 @@
+name: g1_traj_v2_smoke
+control_freq: 50
+trusted: false
+tailored: g1
+action_mean: [
+  -0.1, 0.0, 0.0, 0.3, -0.2, 0.0,
+  -0.1, 0.0, 0.0, 0.3, -0.2, 0.0,
+  0.0, 0.0, 0.0,
+  0.3, 0.25, 0.0, 0.97, 0.15, 0.0, 0.0,
+  0.3, -0.25, 0.0, 0.97, -0.15, 0.0, 0.0
+]
+
+actuator:
+  type: position
+  Kp: [
+    100, 100, 100, 150, 40, 40,
+    100, 100, 100, 150, 40, 40,
+    200, 40, 40,
+    40, 40, 40, 40, 40, 40, 40,
+    40, 40, 40, 40, 40, 40, 40
+  ]
+  Kd: [
+    2, 2, 2, 4, 2, 2,
+    2, 2, 2, 4, 2, 2,
+    5, 5, 5,
+    1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1
+  ]
+
+modules:
+  - cmd_vel_source
+  - waypoint_source
+  - field_subscriber
+
+publish_fields:
+  - cmd_vel
+  - waypoints_b
+  - remain_time
+  - heightmap
+  - action

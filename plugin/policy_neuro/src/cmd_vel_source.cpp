@@ -5,6 +5,10 @@
 
 namespace stepit {
 namespace neuro_policy {
+namespace {
+float applyDeadzone(float value, float deadzone) { return std::abs(value) < deadzone ? 0.0F : value; }
+}  // namespace
+
 constexpr std::array<const char *, CmdVelSource::kNumModes> CmdVelSource::kModeName;
 
 // clang-format off
@@ -33,10 +37,19 @@ CmdVelSource::CmdVelSource(const NeuroPolicySpec &policy_spec, const ModuleSpec 
     config_["velocity_turbo_factor"].to(velocity_turbo_factor_, true);
     config_["velocity_deadzone"].to(velocity_deadzone_, true);
     config_["smoothing"].to(smoothing_, true);
+    config_["clamp_unscaled_velocity_norm"].to(clamp_unscaled_velocity_norm_, true);
     config_["max_acceleration"].to(max_acceleration_, true);
     config_["stall_mode_enabled"].to(mode_enabled_[kStall], true);
     config_["move_mode_enabled"].to(mode_enabled_[kMove], true);
     config_["joystick_enabled"].to(joystick_enabled_, true);
+    config_["joystick_forward_deadzone"].to(joystick_forward_deadzone_, true);
+    config_["joystick_lateral_deadzone"].to(joystick_lateral_deadzone_, true);
+    config_["joystick_yaw_deadzone"].to(joystick_yaw_deadzone_, true);
+    config_["joystick_yaw_scale"].to(joystick_yaw_scale_, true);
+    config_["joystick_disable_lateral"].to(joystick_disable_lateral_, true);
+    config_["joystick_disable_backward"].to(joystick_disable_backward_, true);
+    config_["joystick_disable_yaw"].to(joystick_disable_yaw_, true);
+    config_["joystick_yaw_requires_rb"].to(joystick_yaw_requires_rb_, true);
   }
 }
 
@@ -53,7 +66,16 @@ bool CmdVelSource::reset() {
   });
   joystick_rules_.emplace_back([this](const joystick::State &js) -> std::string {
     if (not joystick_enabled_) return "";
-    return fmt::format("Policy/CmdVel/SetVelocityUnscaled:{},{},{}", -js.las_y(), -js.las_x(), -js.ras_x());
+    float vx = applyDeadzone(-js.las_y(), joystick_forward_deadzone_);
+    float vy = applyDeadzone(-js.las_x(), joystick_lateral_deadzone_);
+    float wz = applyDeadzone(-js.ras_x(), joystick_yaw_deadzone_) * joystick_yaw_scale_;
+
+    if (joystick_yaw_requires_rb_ and not js.RB().pressed) wz = 0.0F;
+    if (joystick_disable_backward_ and vx < 0.0F) vx = 0.0F;
+    if (joystick_disable_lateral_) vy = 0.0F;
+    if (joystick_disable_yaw_) wz = 0.0F;
+
+    return fmt::format("Policy/CmdVel/SetVelocityUnscaled:{},{},{}", vx, vy, wz);
   });
   joystick_rules_.emplace_back(
       [](const joystick::State &js) -> std::string { return js.Start().on_press ? "Policy/CmdVel/CycleMode" : ""; });
@@ -109,12 +131,19 @@ void CmdVelSource::handleControlRequest(ControlRequest request) {
         request.response(kIncorrectArgument);
         break;
       }
+      if (joystick_disable_backward_ and vx < 0.0F) vx = 0.0F;
+      if (joystick_disable_lateral_) vy = 0.0F;
+      if (joystick_disable_yaw_) wz = 0.0F;
       if (action == Action::kSetVelocity) {
         target_cmd_vel_ = Arr3f{vx, vy, wz};
       } else {
         Vec3f unscaled_cmd_vel{vx, vy, wz};
         Arr3f velocity_scale_factor;
-        unscaled_cmd_vel = unscaled_cmd_vel / std::max(1.0F, unscaled_cmd_vel.norm());  // clamp norm to 1.0
+        if (clamp_unscaled_velocity_norm_) {
+          unscaled_cmd_vel = unscaled_cmd_vel / std::max(1.0F, unscaled_cmd_vel.norm());
+        } else {
+          unscaled_cmd_vel = unscaled_cmd_vel.array().cwiseMin(1.0F).cwiseMax(-1.0F).matrix();
+        }
         for (Eigen::Index i{}; i < velocity_scale_factor.size(); ++i) {
           velocity_scale_factor[i] = unscaled_cmd_vel[i] >= 0.0F ? velocity_scale_factor_[i][0]
                                                                  : velocity_scale_factor_[i][1];

@@ -42,9 +42,18 @@ class CmdVelSource : public Module {
   Arr3f velocity_turbo_factor_{Arr3f::Ones()};
   float velocity_deadzone_{0.1};
   bool smoothing_{false};
+  bool clamp_unscaled_velocity_norm_{true};
   float timestep_{0.01};
   Arr3f max_acceleration_{5., 2.5, 10.};
   bool joystick_enabled_{true};
+  float joystick_forward_deadzone_{0.0F};
+  float joystick_lateral_deadzone_{0.0F};
+  float joystick_yaw_deadzone_{0.0F};
+  float joystick_yaw_scale_{1.0F};
+  bool joystick_disable_lateral_{false};
+  bool joystick_disable_backward_{false};
+  bool joystick_disable_yaw_{false};
+  bool joystick_yaw_requires_rb_{false};
 
   enum Mode { kAuto, kStall, kMove, kNumModes } mode_{kAuto};
   static constexpr std::array<const char *, kNumModes> kModeName{"auto", "stall", "move"};
