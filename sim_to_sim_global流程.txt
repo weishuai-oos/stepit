@@ -1,0 +1,143 @@
+# g1_traj_finetune_v2 sim-to-sim global goal 流程
+
+目标：在 unitree_mujoco + StepIt 的 sim-to-sim 里，使用 RViz 给全局目标点；外部脚本根据 `/odom` 闭环生成 base-frame 局部 `waypoints_b` 给策略。这个流程用于验证实机需要的上层闭环：`全局目标 + 定位 -> 局部 waypoint`。
+流程：RViz goal + /odom -> global_goal_to_waypoints.py -> waypoints_b/remain_time
+
+
+## 1. 数据链路
+
+新增的全局目标链路在策略外部：
+
+RViz /goal_pose
+      +
+unitree_mujoco /odom
+      |
+scripts/global_goal_to_waypoints.py
+      |
+      +--> /waypoints_b   std_msgs/msg/Float32MultiArray, 15 floats
+      +--> /remain_time   std_msgs/msg/Float32MultiArray, 5 floats
+
+unitree_mujoco /height_scan_array --> StepIt heightmap
+
+## 2. MuJoCo 配置
+
+`/home/xjh/workspace/unitree_mujoco/simulate/config.yaml` 需要打开：
+
+```yaml
+enable_ray_array: true
+enable_odom: true
+```
+
+`enable_ray_array` 发布 `/height_scan_array`，`enable_odom` 发布 `/odom` 和 TF。
+
+## 3. 编译 unitree_mujoco ROS2 版
+
+如果已经编译过且没有改 C++，可以跳过。
+
+
+cd /home/xjh/workspace/unitree_mujoco
+cd simulate
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_ROS2=ON
+cmake --build build -j$(nproc)
+
+## 4. 启动 unitree_mujoco
+cd /home/xjh/workspace/unitree_mujoco/simulate/build
+./unitree_mujoco
+
+另开终端确认 topic：
+
+ros2 topic hz /odom
+ros2 topic echo /odom --once
+ros2 topic hz /height_scan_array
+ros2 topic echo /height_scan_array --once
+```
+## 5. 启动全局目标转 waypoint 脚本
+
+cd /home/xjh/workspace/stepit
+
+./scripts/global_goal_to_waypoints.py --ros-args \
+  -p odom_topic:=/odom \
+  -p goal_topic:=/goal_pose \
+  -p waypoints_topic:=/waypoints_b \
+  -p remain_time_topic:=/remain_time \
+  -p debug_path_topic:=/global_goal_waypoints_path \
+  -p v_des:=0.50 \
+  -p min_speed:=0.08 \
+  -p target_tolerance:=0.08 \
+  -p heading_tolerance:=0.10 \
+  -p slowdown_distance:=1.0 \
+  -p final_heading_distance:=0.80 \
+  -p yaw_rate_des:=0.80 \
+  -p max_waypoint_distance:=1.35 \
+  -p hold_goal:=true \
+  -p use_goal_heading:=true
+
+到不了优先调这几个：
+  - 位置过冲：减小 v_des 或增大 slowdown_distance
+  - 最终方向转不过来：增大 yaw_rate_des，比如 1.0
+  - 太早开始转最终方向：减小 final_heading_distance
+  - 太晚才转最终方向：增大 final_heading_distance
+  
+  
+脚本在没有 RViz goal 时会持续发布零 `waypoints_b`，所以可以先启动 StepIt 并进入 PolicyOn，再点击目标。
+
+确认输出：
+
+ros2 topic hz /waypoints_b
+ros2 topic echo /waypoints_b --once
+ros2 topic echo /remain_time --once
+ros2 topic echo /global_goal_waypoints_path --once
+
+## 6. 启动 StepIt global policy
+
+cd /home/xjh/workspace/stepit
+
+export STEPIT_NETIF=lo
+export STEPIT_UNITREE2_DOMAIN_ID=1
+export STEPIT_PLUGIN_DIRS=$PWD/install/lib
+export LD_LIBRARY_PATH=$PWD/install/lib:$PWD/extern/robot_sdk/unitree_sdk2/thirdparty/lib/$(uname -m):${LD_LIBRARY_PATH}
+
+./install/bin/stepit \
+  -P ros2 \
+  -c console \
+  -c joystick \
+  -f joystick@unitree2 \
+  -r g1 \
+  -p neuro@$PWD/policies/g1_traj_finetune_v2_global \
+  -- --ros-args --remap __ns:=/stepit
+
+控制台顺序：
+
+Agent/StandUp
+
+PolicyOn 前先确认 `/waypoints_b` 是 15 个 0，或者至少目标还没给出。
+
+Agent/PolicyOn
+
+
+## 7. 启动 RViz
+
+rviz2
+
+RViz 设置：
+  
+  RGB对应xyz
+- Fixed Frame: `odom`
+  Add TF
+  #2D Goal Pose Estimate确认世界系
+- 使用 `2D Goal Pose` 工具发目标
+- 目标 topic: `/goal_pose`
+- 添加 `Path` display，topic 选择 `/global_goal_waypoints_path`。这个 topic 会显示脚本当前发给策略的 5 个全局前瞻点，方便判断脚本是否在正确收敛到终点。
+
+
+## 9. 迁移到实物
+
+实物部署时脚本接口保持不变：
+
+```text
+/goal_pose + /odom 或 TF -> /waypoints_b + /remain_time
+```
+
+只需要把 `/odom` 来源从 MuJoCo ground truth 换成真实机器人定位，例如 Unitree 里程计、VIO、SLAM 或 mocap。策略和 StepIt 的 `g1_traj_finetune_v2_global` 输入接口不需要变。
+
+注意：脚本假设 RViz goal 和 `/odom` 在同一个坐标系里。sim 中 RViz Fixed Frame 用 `odom`；实机如果 RViz 在 `map`，需要保证 `/odom` 也是 map 系，或者后续把脚本改成通过 TF 做 `map -> base_link` 查询。

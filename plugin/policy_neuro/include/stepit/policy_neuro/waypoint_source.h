@@ -18,10 +18,6 @@ class WaypointSource : public Module {
   FieldId remain_time_id_{};
 
   std::vector<float> remain_time_{0.5F, 1.0F, 1.5F, 2.0F, 2.5F};
-  bool unicycle_integration_{true};
-  bool simple_heading_{false};
-  float yaw_rate_deadzone_{1e-4F};
-  float heading_deadzone_{1e-4F};
   float heading_limit_{3.1415926F};
 
   ArrXf waypoints_;

@@ -2,8 +2,13 @@ velocity_scale_factor:
   - [0.7, 0.35]
   - [0.25, 0.25]
   - [0.8, 0.8]
-velocity_turbo_factor: [0.5, 0.5, 0.5]
 velocity_deadzone: 0.08
-smoothing: true
+smoothing: false
 max_acceleration: [1.0, 0.8, 1.5]
 joystick_enabled: true
+joystick_direction_deadzone: 0.06
+joystick_direction_release_deadzone: 0.03
+joystick_direction_switch_margin: 0.2
+joystick_linear_scale: [0.7, 0.35]
+joystick_yaw_deadzone: 0.12
+joystick_yaw_scale: 0.35

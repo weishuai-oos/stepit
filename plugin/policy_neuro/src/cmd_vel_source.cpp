@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 
 #include <stepit/agent.h>
@@ -6,7 +7,29 @@
 namespace stepit {
 namespace neuro_policy {
 namespace {
-float applyDeadzone(float value, float deadzone) { return std::abs(value) < deadzone ? 0.0F : value; }
+float applyDeadzone(float value, float deadzone) {
+  const float magnitude = std::abs(value);
+  if (magnitude <= deadzone) return 0.0F;
+
+  const float scale = std::max(1.0F - deadzone, static_cast<float>(kEPS));
+  const float normalized = clamp((magnitude - deadzone) / scale, 0.0F, 1.0F);
+  return std::copysign(normalized, value);
+}
+
+void enforceCardinalLinearCommand(Arr3f &cmd_vel, const Arr3f &target_cmd_vel) {
+  const bool has_linear_command = target_cmd_vel.template head<2>().abs().maxCoeff() > kEPS;
+  if (not has_linear_command) {
+    cmd_vel[0] = 0.0F;
+    cmd_vel[1] = 0.0F;
+    return;
+  }
+
+  if (std::abs(target_cmd_vel[0]) >= std::abs(target_cmd_vel[1])) {
+    cmd_vel[1] = 0.0F;
+  } else {
+    cmd_vel[0] = 0.0F;
+  }
+}
 }  // namespace
 
 constexpr std::array<const char *, CmdVelSource::kNumModes> CmdVelSource::kModeName;
@@ -42,14 +65,12 @@ CmdVelSource::CmdVelSource(const NeuroPolicySpec &policy_spec, const ModuleSpec 
     config_["stall_mode_enabled"].to(mode_enabled_[kStall], true);
     config_["move_mode_enabled"].to(mode_enabled_[kMove], true);
     config_["joystick_enabled"].to(joystick_enabled_, true);
-    config_["joystick_forward_deadzone"].to(joystick_forward_deadzone_, true);
-    config_["joystick_lateral_deadzone"].to(joystick_lateral_deadzone_, true);
+    config_["joystick_direction_deadzone"].to(joystick_direction_deadzone_, true);
+    config_["joystick_direction_release_deadzone"].to(joystick_direction_release_deadzone_, true);
+    config_["joystick_direction_switch_margin"].to(joystick_direction_switch_margin_, true);
+    config_["joystick_linear_scale"].to(joystick_linear_scale_, true);
     config_["joystick_yaw_deadzone"].to(joystick_yaw_deadzone_, true);
     config_["joystick_yaw_scale"].to(joystick_yaw_scale_, true);
-    config_["joystick_disable_lateral"].to(joystick_disable_lateral_, true);
-    config_["joystick_disable_backward"].to(joystick_disable_backward_, true);
-    config_["joystick_disable_yaw"].to(joystick_disable_yaw_, true);
-    config_["joystick_yaw_requires_rb"].to(joystick_yaw_requires_rb_, true);
   }
 }
 
@@ -59,27 +80,68 @@ bool CmdVelSource::reset() {
   target_cmd_vel_.setZero();
   cmd_stall_            = true;
   velocity_turbo_ratio_ = 0.0;
+  joystick_linear_direction_ = JoystickLinearDirection::kNone;
 
+  joystick_rules_.clear();
   joystick_rules_.emplace_back([this](const joystick::State &js) -> std::string {
     if (not joystick_enabled_) return "";
-    return fmt::format("Policy/CmdVel/SetTurboRatio:{}", (js.rt() + 1.0) / 2.0);
-  });
-  joystick_rules_.emplace_back([this](const joystick::State &js) -> std::string {
-    if (not joystick_enabled_) return "";
-    float vx = applyDeadzone(-js.las_y(), joystick_forward_deadzone_);
-    float vy = applyDeadzone(-js.las_x(), joystick_lateral_deadzone_);
+    const float forward = applyDeadzone(-js.las_y(), joystick_direction_deadzone_);
+    const float lateral = applyDeadzone(-js.las_x(), joystick_direction_deadzone_);
     float wz = applyDeadzone(-js.ras_x(), joystick_yaw_deadzone_) * joystick_yaw_scale_;
 
-    if (joystick_yaw_requires_rb_ and not js.RB().pressed) wz = 0.0F;
-    if (joystick_disable_backward_ and vx < 0.0F) vx = 0.0F;
-    if (joystick_disable_lateral_) vy = 0.0F;
-    if (joystick_disable_yaw_) wz = 0.0F;
+    float vx = 0.0F;
+    float vy = 0.0F;
+    switch (selectJoystickLinearDirection(forward, lateral)) {
+      case JoystickLinearDirection::kForward:
+      case JoystickLinearDirection::kBackward:
+        vx = forward * joystick_linear_scale_[0];
+        break;
+      case JoystickLinearDirection::kLeft:
+      case JoystickLinearDirection::kRight:
+        vy = lateral * joystick_linear_scale_[1];
+        break;
+      case JoystickLinearDirection::kNone:
+        break;
+    }
 
-    return fmt::format("Policy/CmdVel/SetVelocityUnscaled:{},{},{}", vx, vy, wz);
+    return fmt::format("Policy/CmdVel/SetVelocity:{},{},{}", vx, vy, wz);
   });
-  joystick_rules_.emplace_back(
-      [](const joystick::State &js) -> std::string { return js.Start().on_press ? "Policy/CmdVel/CycleMode" : ""; });
   return true;
+}
+
+auto CmdVelSource::selectJoystickLinearDirection(float forward, float lateral) -> JoystickLinearDirection {
+  const float forward_mag = std::abs(forward);
+  const float lateral_mag = std::abs(lateral);
+  const float max_mag     = std::max(forward_mag, lateral_mag);
+
+  if (max_mag <= joystick_direction_release_deadzone_) {
+    joystick_linear_direction_ = JoystickLinearDirection::kNone;
+    return joystick_linear_direction_;
+  }
+
+  auto forward_direction = forward >= 0.0F ? JoystickLinearDirection::kForward : JoystickLinearDirection::kBackward;
+  auto lateral_direction = lateral >= 0.0F ? JoystickLinearDirection::kLeft : JoystickLinearDirection::kRight;
+
+  if (joystick_linear_direction_ == JoystickLinearDirection::kNone) {
+    joystick_linear_direction_ = forward_mag >= lateral_mag ? forward_direction : lateral_direction;
+    return joystick_linear_direction_;
+  }
+
+  const bool holding_forward = joystick_linear_direction_ == JoystickLinearDirection::kForward or
+                               joystick_linear_direction_ == JoystickLinearDirection::kBackward;
+  const float held_mag      = holding_forward ? forward_mag : lateral_mag;
+  const float contender_mag = holding_forward ? lateral_mag : forward_mag;
+
+  if (held_mag <= joystick_direction_release_deadzone_ or
+      contender_mag > held_mag + joystick_direction_switch_margin_) {
+    joystick_linear_direction_ = holding_forward ? lateral_direction : forward_direction;
+  } else if (holding_forward) {
+    joystick_linear_direction_ = forward_direction;
+  } else {
+    joystick_linear_direction_ = lateral_direction;
+  }
+
+  return joystick_linear_direction_;
 }
 
 bool CmdVelSource::update(const LowState &low_state, ControlRequests &requests, FieldMap &context) {
@@ -94,6 +156,7 @@ bool CmdVelSource::update(const LowState &low_state, ControlRequests &requests, 
   } else {
     cmd_vel_ = target_cmd_vel_;
   }
+  enforceCardinalLinearCommand(cmd_vel_, target_cmd_vel_);
 
   switch (mode_) {
     case kAuto:
@@ -131,9 +194,6 @@ void CmdVelSource::handleControlRequest(ControlRequest request) {
         request.response(kIncorrectArgument);
         break;
       }
-      if (joystick_disable_backward_ and vx < 0.0F) vx = 0.0F;
-      if (joystick_disable_lateral_) vy = 0.0F;
-      if (joystick_disable_yaw_) wz = 0.0F;
       if (action == Action::kSetVelocity) {
         target_cmd_vel_ = Arr3f{vx, vy, wz};
       } else {

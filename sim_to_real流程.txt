@@ -1,1 +1,202 @@
-里程计：https://gitee.com/csc105/point_lio_ros2.git
+# g1_traj_finetune_v2 sim-to-real 流程
+
+目标：StepIt 跑在 G1 机载电脑上；策略直接接收 base-frame 局部 waypoint；平地测试时 heightmap 全部给 0。
+
+## 1. 导出策略
+
+沿用已经 sim-to-sim 策略
+
+## 2. 准备实机策略目录
+
+建议不要直接改 sim-to-sim 跑通的目录，复制一份给实机：
+
+```bash
+cd /home/xjh/workspace/stepit
+cp -a policies/g1_traj_finetune_v2 policies/g1_traj_finetune_v2_real
+```
+
+`actor.yml` 保持 300 维输入顺序：
+
+```yaml
+input_fields:
+  observation:
+    - { name: ang_vel, size: 3 }
+    - { name: gravity, size: 3 }
+    - { name: waypoints_b, size: 15 }
+    - { name: joint_pos, size: 29 }
+    - { name: joint_vel, size: 29 }
+    - { name: action_p1, size: 29 }
+    - { name: heightmap, size: 187 }
+    - { name: remain_time, size: 5 }
+```
+
+实机直接订阅 waypoint 和 heightmap 时，`policy.yml` 的 modules 改成只显式加载 field subscriber：
+
+```yaml
+modules:
+  - field_subscriber
+
+publish_fields:
+  - waypoints_b
+  - remain_time
+  - heightmap
+  - action
+```
+
+不要同时保留 `waypoint_source`，否则 `waypoint_source` 和 `field_subscriber` 会同时提供 `waypoints_b/remain_time`，字段源冲突。
+
+## 3. field_subscriber 配置
+
+`policies/g1_traj_finetune_v2_real/field_subscriber.yml` 写成：
+
+```yaml
+waypoints_b:
+  topic: "/waypoints_b"
+  size: 15
+  timeout_threshold: 0.5
+  qos:
+    reliability: "best_effort"
+    durability: "volatile"
+    history: "keep_last"
+
+remain_time:
+  topic: "/remain_time"
+  size: 5
+  timeout_threshold: 0.5
+  qos:
+    reliability: "best_effort"
+    durability: "volatile"
+    history: "keep_last"
+
+heightmap:
+  topic: "/height_scan_array"
+  size: 187
+  timeout_threshold: 0.5
+  qos:
+    reliability: "best_effort"
+    durability: "volatile"
+    history: "keep_last"
+```
+
+三个 topic 都是 `std_msgs/msg/Float32MultiArray`。
+
+数据格式：
+
+- `/waypoints_b`: 15 个 float，顺序为 `[x1,y1,h1, x2,y2,h2, ..., x5,y5,h5]`。
+- `x/y` 是机器人 base frame 下的局部目标，单位 m。
+- `h` 是相对当前机身 yaw 的 heading，单位 rad，建议 wrap 到 `[-pi, pi]`。
+- `/remain_time`: 5 个 float，先固定发 `[0.5, 1.0, 1.5, 2.0, 2.5]`。
+- `/height_scan_array`: 187 个 float，平地测试全 0。
+
+如果 RViz 里直接输入 base-frame 局部 waypoint，不需要里程计。只有当 RViz 输入的是 `map/odom` 全局目标时，才需要 TF/里程计把全局目标持续转换成当前 base frame 下的 `waypoints_b`。
+
+## 4. 发布测试输入
+
+先用全 0 输入做通信和 PolicyOn 测试：
+
+```bash
+source /opt/ros/humble/setup.bash
+
+ros2 topic pub /waypoints_b std_msgs/msg/Float32MultiArray \
+  "{data: [0,0,0, 0,0,0, 0,0,0, 0,0,0, 0,0,0]}" -r 20
+```
+
+另开终端发 remain_time：
+
+```bash
+source /opt/ros/humble/setup.bash
+
+ros2 topic pub /remain_time std_msgs/msg/Float32MultiArray \
+  "{data: [0.5, 1.0, 1.5, 2.0, 2.5]}" -r 20
+```
+
+另开终端发零 heightmap。不要手写 187 个 0，直接用 Python 生成：
+
+```bash
+source /opt/ros/humble/setup.bash
+
+python3 - <<'PY'
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Float32MultiArray
+
+rclpy.init()
+node = Node("zero_heightmap_pub")
+pub = node.create_publisher(Float32MultiArray, "/height_scan_array", 10)
+msg = Float32MultiArray()
+msg.data = [0.0] * 187
+node.create_timer(0.05, lambda: pub.publish(msg))
+rclpy.spin(node)
+PY
+```
+
+确认 topic 正常：
+
+```bash
+ros2 topic hz /waypoints_b
+ros2 topic hz /remain_time
+ros2 topic hz /height_scan_array
+ros2 topic echo /waypoints_b --once
+```
+
+正式用 RViz 时，用自己的 ROS2 节点替代上面的 `ros2 topic pub`，持续发布这三个 topic。
+
+## 5. 编译/同步 StepIt 到机载电脑
+
+在机载电脑上编译，或者把已经编译好的 `stepit` 工程同步过去。编译配置需要包含这些插件：
+
+```bash
+cd /home/unitree/workspace/stepit
+
+cmake -B build -S . \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX=install \
+  -DPYTHON_EXECUTABLE=/usr/bin/python3 \
+  -DPython3_EXECUTABLE=/usr/bin/python3 \
+  -DPython3_ROOT_DIR=/usr \
+  -DSTEPIT_WHITELIST_PLUGINS="control_console;joystick_base;joystick_usb;nnrt_base;nnrt_onnxruntime;policy_neuro;publisher_csv;robot_unitree2;ros2_base;policy_neuro_ros2"
+
+cmake --build build -j$(nproc)
+cmake --install build
+```
+
+如果机载路径不是 `/home/unitree/workspace/stepit`，下面命令里的路径同步改掉。
+
+## 6. 真机启动 StepIt
+
+在 G1 机载电脑上运行。`STEPIT_NETIF` 要换成和机器人 DDS 通信的真实网卡，不要用 sim-to-sim 的 `lo`。
+
+```bash
+cd /home/unitree/workspace/stepit
+
+source /opt/ros/humble/setup.bash
+
+export STEPIT_NETIF=<真实网卡名>              # 例如 eth0/enp*/等，按机器人实际网络改
+export STEPIT_UNITREE2_DOMAIN_ID=<真机domain> # 按现场 Unitree DDS domain 改
+export STEPIT_PLUGIN_DIRS=$PWD/install/lib
+export LD_LIBRARY_PATH=$PWD/install/lib:$PWD/extern/robot_sdk/unitree_sdk2/thirdparty/lib/$(uname -m):${LD_LIBRARY_PATH}
+
+./install/bin/stepit \
+  -P ros2 \
+  -c console \
+  -c joystick \
+  -f joystick@unitree2 \
+  -r g1 \
+  -p neuro@$PWD/policies/g1_traj_finetune_v2_real \
+  -- --ros-args --remap __ns:=/stepit
+```
+
+启动顺序：
+
+1. 先确认 `/waypoints_b`、`/remain_time`、`/height_scan_array` 都在持续发布。
+2. `Agent/StandUp`
+3. 保持零 waypoint，执行 `Agent/PolicyOn`
+4. 观察机器人是否稳定站立，确认没有关节目标突变。
+5. 再给很小的局部 waypoint，例如第一个点 `x=0.05` 或 `0.10`，逐步放大。
+
+## 7. 真机前必须检查
+
+- 继续用 `-r g1`，不要用 `g1_bfs`。
+- 确认 `config/robot/g1.yml` 里的 `use_torso_imu` 是否符合真机 IMU 选择；站平时 `gravity` 应接近 `[0, 0, -1]`。
+第一次实机建议支撑/保护状态下测试。
+- waypoint 必须是 base frame 局部量。如果由 RViz 全局点生成，需要每帧根据最新 TF/odom 重算，不能只在点击瞬间算一次。

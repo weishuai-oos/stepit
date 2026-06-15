@@ -51,6 +51,7 @@ class Unitree2Joystick final : public Joystick {
   State state_;
   std::mutex mutex_;
   std::atomic<std::size_t> tick_{};
+  bool joystick_debug_{false};
 };
 }  // namespace joystick
 }  // namespace stepit

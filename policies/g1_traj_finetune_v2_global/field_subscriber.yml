@@ -1,0 +1,26 @@
+waypoints_b:
+  topic: "/waypoints_b"
+  size: 15
+  timeout_threshold: 0.5
+  qos:
+    reliability: "best_effort"
+    durability: "volatile"
+    history: "keep_last"
+
+remain_time:
+  topic: "/remain_time"
+  size: 5
+  timeout_threshold: 0.5
+  qos:
+    reliability: "best_effort"
+    durability: "volatile"
+    history: "keep_last"
+
+heightmap:
+  topic: "/height_scan_array"
+  size: 187
+  timeout_threshold: 0.5
+  qos:
+    reliability: "best_effort"
+    durability: "volatile"
+    history: "keep_last"

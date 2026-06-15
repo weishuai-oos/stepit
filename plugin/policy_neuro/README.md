@@ -95,11 +95,8 @@ StepIt plugin for running neural network-based policy.
 
 | Key                  | Command                                    |
 | :------------------- | :----------------------------------------- |
-| **Start**            | `Policy/CmdVel/CycleMode`                  |
-| **RT**               | `Policy/CmdVel/SetTurboRatio`              |
-| **LAS-X**            | `Policy/CmdVel/SetVelocityUnscaled` (`vx`) |
-| **LAS-Y**            | `Policy/CmdVel/SetVelocityUnscaled` (`vy`) |
-| **RAS-X**            | `Policy/CmdVel/SetVelocityUnscaled` (`wz`) |
+| **LAS-X / LAS-Y**    | `Policy/CmdVel/SetVelocity` (`vx` or `vy`, dominant axis only) |
+| **RAS-X**            | `Policy/CmdVel/SetVelocity` (`wz`)          |
 | **RAS-Y**            | `Policy/CmdPitch/SetPitchUnscaled`         |
 | **D-Pad Up**         | `Policy/CmdHeight/IncreaseHeight`          |
 | **D-Pad Down**       | `Policy/CmdHeight/DecreaseHeight`          |

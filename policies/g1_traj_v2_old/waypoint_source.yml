@@ -1,4 +1,2 @@
 remain_time: [0.5, 1.0, 1.5, 2.0, 2.5]
-unicycle_integration: true
-yaw_rate_deadzone: 0.0001
 heading_limit: 3.1415926

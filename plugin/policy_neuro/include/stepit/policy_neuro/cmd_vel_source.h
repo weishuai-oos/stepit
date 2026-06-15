@@ -46,14 +46,16 @@ class CmdVelSource : public Module {
   float timestep_{0.01};
   Arr3f max_acceleration_{5., 2.5, 10.};
   bool joystick_enabled_{true};
-  float joystick_forward_deadzone_{0.0F};
-  float joystick_lateral_deadzone_{0.0F};
+  float joystick_direction_deadzone_{0.0F};
+  float joystick_direction_release_deadzone_{0.03F};
+  float joystick_direction_switch_margin_{0.2F};
+  Arr2f joystick_linear_scale_{0.7F, 0.35F};
   float joystick_yaw_deadzone_{0.0F};
   float joystick_yaw_scale_{1.0F};
-  bool joystick_disable_lateral_{false};
-  bool joystick_disable_backward_{false};
-  bool joystick_disable_yaw_{false};
-  bool joystick_yaw_requires_rb_{false};
+
+  enum class JoystickLinearDirection : std::uint8_t { kNone, kForward, kBackward, kLeft, kRight };
+  JoystickLinearDirection joystick_linear_direction_{JoystickLinearDirection::kNone};
+  JoystickLinearDirection selectJoystickLinearDirection(float forward, float lateral);
 
   enum Mode { kAuto, kStall, kMove, kNumModes } mode_{kAuto};
   static constexpr std::array<const char *, kNumModes> kModeName{"auto", "stall", "move"};

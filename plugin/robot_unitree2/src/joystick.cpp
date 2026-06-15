@@ -1,8 +1,11 @@
 #include <stepit/robot/unitree2/joystick.h>
+#include <stepit/logging.h>
+#include <stepit/utils.h>
 
 namespace stepit {
 namespace joystick {
 Unitree2Joystick::Unitree2Joystick() {
+  getenv("STEPIT_JOYSTICK_DEBUG", joystick_debug_, false);
   Unitree2ServiceClient::initialize();
   sub_ = std::make_shared<u2_sdk::ChannelSubscriber<u2_msg::WirelessController_>>("rt/wirelesscontroller");
   sub_->InitChannel([this](const void *msg) { callback(static_cast<const u2_msg::WirelessController_ *>(msg)); }, 1);
@@ -46,6 +49,11 @@ void Unitree2Joystick::callback(const u2_msg::WirelessController_ *msg) {
   std::lock_guard<std::mutex> _(mutex_);
   updateState(state_, msg->lx(), msg->ly(), msg->rx(), msg->ry(), msg->keys());
   tick_ += 1;
+
+  if (joystick_debug_ and tick_ % 25 == 0) {
+    STEPIT_INFO("Unitree joystick raw lx={} ly={} rx={} ry={} -> las=({}, {}) ras=({}, {})", msg->lx(), msg->ly(),
+                msg->rx(), msg->ry(), state_.las_x(), state_.las_y(), state_.ras_x(), state_.ras_y());
+  }
 }
 
 STEPIT_REGISTER_JOYSTICK(unitree2, kDefPriority, Joystick::make<Unitree2Joystick>);

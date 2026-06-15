@@ -55,4 +55,16 @@
   ros2 topic echo /stepit/field/waypoints_b --once
 
   如果 cmd_vel 会随摇杆变化，waypoints_b 也跟着变，就说明遥控器到路点链路通了。
+  
+  
+  
+  新增全局目标转局部 waypoint 脚本：stepit/scripts/global_goal_to_waypoints.py:1
+      - 订阅 /odom、/goal_pose
+      - 发布 /waypoints_b、/remain_time
+      - 默认 v_des = 0.50 m/s
+      - 按“起点到终点原始直线”投影生成 5 个点，不是开环一直向前
+
+  
+  
+ 
 
