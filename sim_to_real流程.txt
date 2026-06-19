@@ -1,116 +1,146 @@
-# g1_traj_finetune_v2 sim-to-real 流程
+# g1_traj_finetune_v2 sim-to-real global goal 流程
 
-目标：StepIt 跑在 G1 机载电脑上；策略直接接收 base-frame 局部 waypoint；平地测试时 heightmap 全部给 0。
+目标：在 G1 机载电脑上，用 Mid-360 + Point-LIO 提供 `/odom`，用 RViz 发布全局目标点，外部脚本根据 `/odom` 闭环生成 base-frame 局部 `waypoints_b` 给 StepIt 策略。
 
-## 1. 导出策略
+流程：
 
-沿用已经 sim-to-sim 策略
+```text
+Mid-360
+  |
+livox_ros_driver2
+  +--> /livox/lidar
+  +--> /livox/imu
+        |
+catkin_point_lio_unilidar
+        |
+        +--> /odom
 
-## 2. 准备实机策略目录
+RViz /goal_pose
+      +
+/odom
+      |
+scripts/global_goal_to_waypoints.py
+      |
+      +--> /waypoints_b   std_msgs/msg/Float32MultiArray, 15 floats
+      +--> /remain_time   std_msgs/msg/Float32MultiArray, 5 floats
 
-建议不要直接改 sim-to-sim 跑通的目录，复制一份给实机：
+zero heightmap publisher
+      |
+      +--> /height_scan_array std_msgs/msg/Float32MultiArray, 187 floats
+
+StepIt g1_traj_finetune_v2_global
+```
+
+## 1. Mid-360 配置检查
+
+Mid-360 配置文件在：
+
+```text
+/home/unitree/Workspace/Mirlab/ws_livox/src/livox_ros_driver2/config/MID360_config.json
+```
+
+需要确认雷达和主机 IP 正确。当前现场配置应为：
+
+```json
+"lidar_ip": ["192.168.123.120"]
+"host_ip": "192.168.123.164"
+```
+
+如果改了 `src/livox_ros_driver2/config/MID360_config.json`，重新 build，并确认 install 里的配置也正确：
 
 ```bash
-cd /home/xjh/workspace/stepit
-cp -a policies/g1_traj_finetune_v2 policies/g1_traj_finetune_v2_real
+cd /home/unitree/Workspace/Mirlab/ws_livox
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install
 ```
 
-`actor.yml` 保持 300 维输入顺序：
+单独测试 Livox 驱动和雷达：
 
-```yaml
-input_fields:
-  observation:
-    - { name: ang_vel, size: 3 }
-    - { name: gravity, size: 3 }
-    - { name: waypoints_b, size: 15 }
-    - { name: joint_pos, size: 29 }
-    - { name: joint_vel, size: 29 }
-    - { name: action_p1, size: 29 }
-    - { name: heightmap, size: 187 }
-    - { name: remain_time, size: 5 }
+```bash
+cd /home/unitree/Workspace/Mirlab/ws_livox
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 launch livox_ros_driver2 rviz_MID360_launch.py
 ```
 
-实机直接订阅 waypoint 和 heightmap 时，`policy.yml` 的 modules 改成只显式加载 field subscriber：
-
-```yaml
-modules:
-  - field_subscriber
-
-publish_fields:
-  - waypoints_b
-  - remain_time
-  - heightmap
-  - action
-```
-
-不要同时保留 `waypoint_source`，否则 `waypoint_source` 和 `field_subscriber` 会同时提供 `waypoints_b/remain_time`，字段源冲突。
-
-## 3. field_subscriber 配置
-
-`policies/g1_traj_finetune_v2_real/field_subscriber.yml` 写成：
-
-```yaml
-waypoints_b:
-  topic: "/waypoints_b"
-  size: 15
-  timeout_threshold: 0.5
-  qos:
-    reliability: "best_effort"
-    durability: "volatile"
-    history: "keep_last"
-
-remain_time:
-  topic: "/remain_time"
-  size: 5
-  timeout_threshold: 0.5
-  qos:
-    reliability: "best_effort"
-    durability: "volatile"
-    history: "keep_last"
-
-heightmap:
-  topic: "/height_scan_array"
-  size: 187
-  timeout_threshold: 0.5
-  qos:
-    reliability: "best_effort"
-    durability: "volatile"
-    history: "keep_last"
-```
-
-三个 topic 都是 `std_msgs/msg/Float32MultiArray`。
-
-数据格式：
-
-- `/waypoints_b`: 15 个 float，顺序为 `[x1,y1,h1, x2,y2,h2, ..., x5,y5,h5]`。
-- `x/y` 是机器人 base frame 下的局部目标，单位 m。
-- `h` 是相对当前机身 yaw 的 heading，单位 rad，建议 wrap 到 `[-pi, pi]`。
-- `/remain_time`: 5 个 float，先固定发 `[0.5, 1.0, 1.5, 2.0, 2.5]`。
-- `/height_scan_array`: 187 个 float，平地测试全 0。
-
-如果 RViz 里直接输入 base-frame 局部 waypoint，不需要里程计。只有当 RViz 输入的是 `map/odom` 全局目标时，才需要 TF/里程计把全局目标持续转换成当前 base frame 下的 `waypoints_b`。
-
-## 4. 发布测试输入
-
-先用全 0 输入做通信和 PolicyOn 测试：
+另开终端确认 topic：
 
 ```bash
 source /opt/ros/humble/setup.bash
+source /home/unitree/Workspace/Mirlab/ws_livox/install/setup.bash
 
-ros2 topic pub /waypoints_b std_msgs/msg/Float32MultiArray \
-  "{data: [0,0,0, 0,0,0, 0,0,0, 0,0,0, 0,0,0]}" -r 20
+ros2 topic list | grep /livox
+ros2 topic info /livox/lidar
+ros2 topic info /livox/imu
 ```
 
-另开终端发 remain_time：
+正式跑 StepIt 时不需要单独启动这个测试 launch，后面的 `mapping_mid360_stepit.launch.py` 会默认一起启动 `livox_ros_driver2`。
+
+## 2. Point-LIO 实机 odom
+
+StepIt global flow 需要 `/odom`。已新增专用 launch：
+
+```text
+/home/unitree/Workspace/Mirlab/catkin_point_lio_unilidar/src/point_lio_ros2/launch/mapping_mid360_stepit.launch.py
+```
+
+这个 launch 会：
+
+- 启动 `livox_ros_driver2 msg_MID360_launch.py`
+- 启动 `pointlio_mapping`
+- 订阅 `/livox/lidar` 和 `/livox/imu`
+- 发布 `/odom`
+- 设置 odom frame 为 `odom -> base_link`
+- 默认关闭注册点云发布和 PCD 保存
+
+如果修改，重新安装：
 
 ```bash
+cd /home/unitree/Workspace/Mirlab/catkin_point_lio_unilidar
 source /opt/ros/humble/setup.bash
-
-ros2 topic pub /remain_time std_msgs/msg/Float32MultiArray \
-  "{data: [0.5, 1.0, 1.5, 2.0, 2.5]}" -r 20
+source /home/unitree/Workspace/Mirlab/ws_livox/install/setup.bash
+colcon build --symlink-install
 ```
 
-另开终端发零 heightmap。不要手写 187 个 0，直接用 Python 生成：
+启动 odom：
+
+```bash
+cd /home/unitree/Workspace/Mirlab/catkin_point_lio_unilidar
+source /opt/ros/humble/setup.bash
+source /home/unitree/Workspace/Mirlab/ws_livox/install/setup.bash
+source install/setup.bash
+
+ros2 launch point_lio mapping_mid360_stepit.launch.py
+```
+
+如果已经手动启动了 `livox_ros_driver2`，则：
+
+```bash
+ros2 launch point_lio mapping_mid360_stepit.launch.py start_livox:=false
+```
+
+确认 `/odom`：
+
+```bash
+ros2 topic hz /odom
+ros2 topic echo /odom --once
+```
+
+期望：
+
+```text
+Type: nav_msgs/msg/Odometry
+frame_id: odom
+child_frame_id: base_link
+rate: about 10 Hz
+```
+
+注意：当前 Point-LIO fork 运行时可能打印 `"world" passed to lookupTransform...`，这是额外 `/base_odom` 分支在找 TF，不影响 `/odom -> global_goal_to_waypoints.py -> StepIt` 这条链路。
+
+## 3. 发布平地 heightmap
+
+平地测试先用全 0 heightmap。`/height_scan_array` 是 `std_msgs/msg/Float32MultiArray`，长度 187。
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -130,23 +160,75 @@ rclpy.spin(node)
 PY
 ```
 
-确认 topic 正常：
+确认：
+
+```bash
+ros2 topic hz /height_scan_array
+ros2 topic echo /height_scan_array --once
+```
+
+## 4. 启动全局目标转 waypoint 脚本
+
+脚本接口和 sim-to-sim global 流程一致，只是 `/odom` 来源换成 Point-LIO。
+
+```bash
+cd /home/unitree/Workspace/Mirlab/stepit
+source /opt/ros/humble/setup.bash
+
+./scripts/global_goal_to_waypoints.py --ros-args \
+  -p odom_topic:=/odom \
+  -p goal_topic:=/goal_pose \
+  -p waypoints_topic:=/waypoints_b \
+  -p remain_time_topic:=/remain_time \
+  -p debug_path_topic:=/global_goal_waypoints_path \
+  -p v_des:=0.50 \
+  -p min_speed:=0.08 \
+  -p target_tolerance:=0.08 \
+  -p heading_tolerance:=0.10 \
+  -p slowdown_distance:=1.0 \
+  -p final_heading_distance:=0.80 \
+  -p yaw_rate_des:=0.80 \
+  -p max_waypoint_distance:=1.35 \
+  -p hold_goal:=true \
+  -p use_goal_heading:=true
+```
+
+没有 RViz goal 时，脚本会持续发布零 `waypoints_b`，所以可以先启动 StepIt 并进入 PolicyOn，再点击目标。
+
+确认输出：
 
 ```bash
 ros2 topic hz /waypoints_b
-ros2 topic hz /remain_time
-ros2 topic hz /height_scan_array
 ros2 topic echo /waypoints_b --once
+ros2 topic echo /remain_time --once
+ros2 topic echo /global_goal_waypoints_path --once
 ```
 
-正式用 RViz 时，用自己的 ROS2 节点替代上面的 `ros2 topic pub`，持续发布这三个 topic。
+数据格式：
 
-## 5. 编译/同步 StepIt 到机载电脑
+- `/waypoints_b`: 15 个 float，顺序为 `[x1,y1,h1, x2,y2,h2, ..., x5,y5,h5]`
+- `x/y`: 当前 `base_link` 下的局部目标，单位 m
+- `h`: 相对当前机身 yaw 的 heading，单位 rad
+- `/remain_time`: 5 个 float，默认 `[0.5, 1.0, 1.5, 2.0, 2.5]`
 
-在机载电脑上编译，或者把已经编译好的 `stepit` 工程同步过去。编译配置需要包含这些插件：
+到不了目标时优先调：
+
+- 位置过冲：减小 `v_des` 或增大 `slowdown_distance`
+- 最终方向转不过来：增大 `yaw_rate_des`，例如 `1.0`
+- 太早开始转最终方向：减小 `final_heading_distance`
+- 太晚才转最终方向：增大 `final_heading_distance`
+
+## 6. 编译 StepIt
+
+如果 StepIt 已编译且策略/插件没有改，可以跳过。
 
 ```bash
-cd /home/unitree/workspace/stepit
+cd /home/unitree/Workspace/Mirlab/stepit
+source /opt/ros/humble/setup.bash
+
+# 旧的 x86_64 install 目录需要删除
+rm -rf install
+rm -rf build
 
 cmake -B build -S . \
   -DCMAKE_BUILD_TYPE=Release \
@@ -160,19 +242,18 @@ cmake --build build -j$(nproc)
 cmake --install build
 ```
 
-如果机载路径不是 `/home/unitree/workspace/stepit`，下面命令里的路径同步改掉。
+## 7. 开调试模式启动 StepIt
 
-## 6. 真机启动 StepIt
+在 G1 机载电脑上运行。不要用 sim-to-sim 的 `lo`。
 
-在 G1 机载电脑上运行。`STEPIT_NETIF` 要换成和机器人 DDS 通信的真实网卡，不要用 sim-to-sim 的 `lo`。
+当前机器上 `enP8p1s0` 是 `192.168.123.164/24`，通常用于和 Mid-360/机器人侧通信；如果现场 Unitree DDS 用别的网卡，需要改 `STEPIT_NETIF`。
 
 ```bash
-cd /home/unitree/workspace/stepit
-
+cd /home/unitree/Workspace/Mirlab/stepit
 source /opt/ros/humble/setup.bash
 
-export STEPIT_NETIF=<真实网卡名>              # 例如 eth0/enp*/等，按机器人实际网络改
-export STEPIT_UNITREE2_DOMAIN_ID=<真机domain> # 按现场 Unitree DDS domain 改
+export STEPIT_NETIF=enP8p1s0
+export STEPIT_UNITREE2_DOMAIN_ID=0
 export STEPIT_PLUGIN_DIRS=$PWD/install/lib
 export LD_LIBRARY_PATH=$PWD/install/lib:$PWD/extern/robot_sdk/unitree_sdk2/thirdparty/lib/$(uname -m):${LD_LIBRARY_PATH}
 
@@ -182,21 +263,70 @@ export LD_LIBRARY_PATH=$PWD/install/lib:$PWD/extern/robot_sdk/unitree_sdk2/third
   -c joystick \
   -f joystick@unitree2 \
   -r g1 \
-  -p neuro@$PWD/policies/g1_traj_finetune_v2_real \
+  -p neuro@$PWD/policies/g1_traj_finetune_v2_global \
   -- --ros-args --remap __ns:=/stepit
 ```
 
-启动顺序：
+控制台顺序：
 
-1. 先确认 `/waypoints_b`、`/remain_time`、`/height_scan_array` 都在持续发布。
-2. `Agent/StandUp`
-3. 保持零 waypoint，执行 `Agent/PolicyOn`
-4. 观察机器人是否稳定站立，确认没有关节目标突变。
-5. 再给很小的局部 waypoint，例如第一个点 `x=0.05` 或 `0.10`，逐步放大。
+```text
+Agent/StandUp
+Agent/PolicyOn
+```
 
-## 7. 真机前必须检查
+`PolicyOn` 前先确认：
 
-- 继续用 `-r g1`，不要用 `g1_bfs`。
-- 确认 `config/robot/g1.yml` 里的 `use_torso_imu` 是否符合真机 IMU 选择；站平时 `gravity` 应接近 `[0, 0, -1]`。
-第一次实机建议支撑/保护状态下测试。
-- waypoint 必须是 base frame 局部量。如果由 RViz 全局点生成，需要每帧根据最新 TF/odom 重算，不能只在点击瞬间算一次。
+```bash
+ros2 topic echo /waypoints_b --once
+ros2 topic echo /remain_time --once
+ros2 topic echo /height_scan_array --once
+```
+
+此时 `/waypoints_b` 应该是 15 个 0，或者至少还没有给出非零目标。
+
+## 8. 启动 RViz
+
+```bash
+source /opt/ros/humble/setup.bash
+rviz2
+```
+
+RViz 设置：
+
+- Fixed Frame: `odom`
+- 添加 `TF`
+- 使用 `2D Goal Pose` 工具发目标
+- 目标 topic: `/goal_pose`
+- 添加 `Path` display，topic 选择 `/global_goal_waypoints_path`
+
+`/global_goal_waypoints_path` 会显示脚本当前发给策略的 5 个全局前瞻点，用来判断 waypoint 是否在正确收敛到终点。
+
+## 9. 启动顺序汇总
+
+推荐按这个顺序开终端：
+
+1. `/odom`: `ros2 launch point_lio mapping_mid360_stepit.launch.py`
+2. `/height_scan_array`: 零 heightmap publisher
+3. `/waypoints_b` 和 `/remain_time`: `global_goal_to_waypoints.py`
+4. StepIt: `g1_traj_finetune_v2_global`
+5. RViz: 发送 `/goal_pose`
+
+每一步都先确认 topic：
+
+```bash
+ros2 topic hz /odom
+ros2 topic hz /height_scan_array
+ros2 topic hz /waypoints_b
+ros2 topic echo /waypoints_b --once
+```
+
+实机第一次测试建议支撑/保护状态下进行。先保持零 waypoint 进入 `PolicyOn`，确认没有关节目标突变，再给很小目标，例如 0.05 m 或 0.10 m，逐步放大。
+
+## 10. 真机前必须检查
+
+- 继续用 `-r g1`，不要用 `g1_bfs`
+- `STEPIT_NETIF` 必须是真机 Unitree SDK2 通信网卡，不要用 `lo`
+- `STEPIT_UNITREE2_DOMAIN_ID` 必须和现场机器人 DDS domain 一致
+- `/odom` 和 RViz `/goal_pose` 必须在同一个坐标系里，本流程统一用 `odom`
+- 平地测试时 `/height_scan_array` 全 0
+- Point-LIO `/odom` 漂移较大时，先不要放大目标距离

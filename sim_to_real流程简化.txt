@@ -1,0 +1,132 @@
+## 1. Mid-360 配置修改
+
+## 2. Point-LIO 实机 odom
+启动 odom：
+
+```bash
+cd /home/unitree/Workspace/Mirlab/catkin_point_lio_unilidar
+source /opt/ros/humble/setup.bash
+source /home/unitree/Workspace/Mirlab/ws_livox/install/setup.bash
+source install/setup.bash
+
+ros2 launch point_lio mapping_mid360_stepit.launch.py
+```
+
+## 3. 发布平地 heightmap
+
+平地测试先用全 0 heightmap。`/height_scan_array` 是 `std_msgs/msg/Float32MultiArray`，长度 187。
+
+```bash
+source /opt/ros/humble/setup.bash
+
+python3 - <<'PY'
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Float32MultiArray
+
+rclpy.init()
+node = Node("zero_heightmap_pub")
+pub = node.create_publisher(Float32MultiArray, "/height_scan_array", 10)
+msg = Float32MultiArray()
+msg.data = [0.0] * 187
+node.create_timer(0.05, lambda: pub.publish(msg))
+rclpy.spin(node)
+PY
+```
+## 4. 启动全局目标转 waypoint 脚本
+
+脚本接口和 sim-to-sim global 流程一致，只是 `/odom` 来源换成 Point-LIO。
+
+```bash
+cd /home/unitree/Workspace/Mirlab/stepit
+source /opt/ros/humble/setup.bash
+
+./scripts/global_goal_to_waypoints.py --ros-args \
+  -p odom_topic:=/odom \
+  -p goal_topic:=/goal_pose \
+  -p waypoints_topic:=/waypoints_b \
+  -p remain_time_topic:=/remain_time \
+  -p debug_path_topic:=/global_goal_waypoints_path \
+  -p v_des:=0.50 \
+  -p min_speed:=0.08 \
+  -p target_tolerance:=0.08 \
+  -p heading_tolerance:=0.10 \
+  -p slowdown_distance:=1.0 \
+  -p final_heading_distance:=0.80 \
+  -p yaw_rate_des:=0.80 \
+  -p max_waypoint_distance:=1.35 \
+  -p hold_goal:=true \
+  -p use_goal_heading:=true
+```
+
+## 6. 编译 StepIt
+
+如果 StepIt 已编译且策略/插件没有改，可以跳过。
+
+```bash
+cd /home/unitree/Workspace/Mirlab/stepit
+source /opt/ros/humble/setup.bash
+
+# 旧的 x86_64 install 目录需要删除
+rm -rf install
+rm -rf build
+
+cmake -B build -S . \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX=install \
+  -DPYTHON_EXECUTABLE=/usr/bin/python3 \
+  -DPython3_EXECUTABLE=/usr/bin/python3 \
+  -DPython3_ROOT_DIR=/usr \
+  -DSTEPIT_WHITELIST_PLUGINS="control_console;joystick_base;joystick_usb;nnrt_base;nnrt_onnxruntime;policy_neuro;publisher_csv;robot_unitree2;ros2_base;policy_neuro_ros2"
+
+cmake --build build -j$(nproc)
+cmake --install build
+```
+
+## 7. 开调试模式启动 StepIt
+
+```bash
+cd /home/unitree/Workspace/Mirlab/stepit
+source /opt/ros/humble/setup.bash
+
+export STEPIT_NETIF=enP8p1s0
+export STEPIT_UNITREE2_DOMAIN_ID=0
+export STEPIT_PLUGIN_DIRS=$PWD/install/lib
+export LD_LIBRARY_PATH=$PWD/install/lib:$PWD/extern/robot_sdk/unitree_sdk2/thirdparty/lib/$(uname -m):${LD_LIBRARY_PATH}
+
+./install/bin/stepit \
+  -P ros2 \
+  -c console \
+  -c joystick \
+  -f joystick@unitree2 \
+  -r g1 \
+  -p neuro@$PWD/policies/g1_traj_finetune_v2_global \
+  -- --ros-args --remap __ns:=/stepit
+```
+
+控制台顺序：
+
+```text
+Agent/StandUp
+Agent/PolicyOn
+```
+
+`PolicyOn` 前先确认：
+
+```bash
+ros2 topic echo /waypoints_b --once
+ros2 topic echo /remain_time --once
+ros2 topic echo /height_scan_array --once
+```
+
+
+## 8. 启动 RViz
+RViz 设置：
+
+- Fixed Frame: `odom`
+- 添加 `TF`
+- 使用 `2D Goal Pose` 工具发目标
+- 目标 topic: `/goal_pose`
+- 添加 `Path` display，topic 选择 `/global_goal_waypoints_path`
+`/global_goal_waypoints_path` 会显示脚本当前发给策略的 5 个全局前瞻点，用来判断 waypoint 是否在正确收敛到终点。
+
