@@ -171,29 +171,56 @@ ros2 topic echo /height_scan_array --once
 
 脚本接口和 sim-to-sim global 流程一致，只是 `/odom` 来源换成 Point-LIO。
 
+推荐使用封装脚本启动。注意：下面这些 `--v-des`、`--tracking-yaw-rate` 等参数只传给 waypoint 生成脚本，不是 StepIt 参数；StepIt 仍然按第 7 步单独启动 `g1_traj_finetune_v2_global`。
+
+第一次实机测试建议用保守 smooth 模式，并先忽略 RViz 箭头最终朝向，只测试“到点”：
+
 ```bash
 cd /home/unitree/Workspace/Mirlab/stepit
-source /opt/ros/humble/setup.bash
 
-./scripts/global_goal_to_waypoints.py --ros-args \
-  -p odom_topic:=/odom \
-  -p goal_topic:=/goal_pose \
-  -p waypoints_topic:=/waypoints_b \
-  -p remain_time_topic:=/remain_time \
-  -p debug_path_topic:=/global_goal_waypoints_path \
-  -p v_des:=0.50 \
-  -p min_speed:=0.08 \
-  -p target_tolerance:=0.08 \
-  -p heading_tolerance:=0.10 \
-  -p slowdown_distance:=1.0 \
-  -p final_heading_distance:=0.80 \
-  -p yaw_rate_des:=0.80 \
-  -p max_waypoint_distance:=1.35 \
-  -p hold_goal:=true \
-  -p use_goal_heading:=true
+./scripts/run_global_goal_waypoints.sh smooth \
+  --v-des 0.35 \
+  --tracking-yaw-rate 0.30 \
+  --final-heading-distance 0.60 \
+  --no-goal-heading
 ```
 
-没有 RViz goal 时，脚本会持续发布零 `waypoints_b`，所以可以先启动 StepIt 并进入 PolicyOn，再点击目标。
+如果到点过程稳定，再打开 RViz 目标箭头最终朝向：
+
+```bash
+./scripts/run_global_goal_waypoints.sh smooth \
+  --v-des 0.35 \
+  --tracking-yaw-rate 0.30 \
+  --final-heading-distance 0.60 \
+  --use-goal-heading
+```
+
+如果要试曲率受限圆弧模式：
+
+```bash
+./scripts/run_global_goal_waypoints.sh arc \
+  --v-des 0.35 \
+  --tracking-yaw-rate 0.30 \
+  --min-turn-radius 1.20 \
+  --max-guarded-turn-angle 1.00
+```
+
+如果要回到原始直线规划器：
+
+```bash
+./scripts/run_global_goal_waypoints.sh line \
+  --v-des 0.35 \
+  --final-heading-distance 0.60 \
+  --no-goal-heading
+```
+
+可以先用 `--print` 查看实际展开出的 ROS 参数，不运行节点：
+
+```bash
+./scripts/run_global_goal_waypoints.sh smooth --v-des 0.35 --tracking-yaw-rate 0.30 --print
+```
+
+没有 RViz goal 时，脚本会持续发布零 `waypoints_b`，所以可以先启动 StepIt 并进入 PolicyOn，再点击目标。确保同一时间只有一个 waypoint 生成脚本在发布 `/waypoints_b`。
 
 确认输出：
 
@@ -201,7 +228,10 @@ source /opt/ros/humble/setup.bash
 ros2 topic hz /waypoints_b
 ros2 topic echo /waypoints_b --once
 ros2 topic echo /remain_time --once
-ros2 topic echo /global_goal_waypoints_path --once
+ros2 topic echo /smooth_global_goal_waypoints_path --once
+# 如果使用 arc 或 line，分别检查：
+# ros2 topic echo /arc_global_goal_waypoints_path --once
+# ros2 topic echo /global_goal_waypoints_path --once
 ```
 
 数据格式：
@@ -211,12 +241,14 @@ ros2 topic echo /global_goal_waypoints_path --once
 - `h`: 相对当前机身 yaw 的 heading，单位 rad
 - `/remain_time`: 5 个 float，默认 `[0.5, 1.0, 1.5, 2.0, 2.5]`
 
-到不了目标时优先调：
+调参优先级：
 
-- 位置过冲：减小 `v_des` 或增大 `slowdown_distance`
-- 最终方向转不过来：增大 `yaw_rate_des`，例如 `1.0`
-- 太早开始转最终方向：减小 `final_heading_distance`
-- 太晚才转最终方向：增大 `final_heading_distance`
+- 启动/转向危险：优先减小 `--tracking-yaw-rate`，建议 `0.25~0.35`；稳定后可升到 `0.45~0.60`。
+- 整体走得太猛或过冲：减小 `--v-des`，建议从 `0.25~0.35` 试；稳定后再升到 `0.45~0.50`。
+- 过早开始对齐 RViz 箭头方向：减小 `--final-heading-distance`，例如 `0.40~0.60`。
+- 到点后最终方向转不过来：增大 `--yaw-rate`，例如 `0.80~1.00`；如果最终原地转身危险则降到 `0.30~0.50`。
+- 只想先验证到点，不想让目标箭头影响朝向：使用 `--no-goal-heading`。
+- arc 模式还像绕圈：增大 `--min-turn-radius` 到 `1.20~1.50`，并把 `--max-guarded-turn-angle` 降到 `0.80~1.00`。
 
 ## 6. 编译 StepIt
 

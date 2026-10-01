@@ -1,101 +1,71 @@
-# g1_traj_finetune_v2 sim-to-sim global goal 流程
+# 简版：从编译到运行的全流程
 
-目标：在 unitree_mujoco + StepIt 的 sim-to-sim 里，使用 RViz 给全局目标点；外部脚本根据 `/odom` 闭环生成 base-frame 局部 `waypoints_b` 给策略。这个流程用于验证实机需要的上层闭环：`全局目标 + 定位 -> 局部 waypoint`。
-流程：RViz goal + /odom -> global_goal_to_waypoints.py -> waypoints_b/remain_time
+如果只想先把 sim-to-sim 跑起来，按下面顺序开 4 个终端。以下命令默认在
+`xjh@10.12.120.109` 上执行，工作区为 `/home/xjh/workspace/mirlab_run`。推荐首次使用
+`navfn_xy_legacy` 建立基线，不要同时启动旧 bridge、`smooth_global_goal_to_waypoints.py`
+或 `arc_global_goal_to_waypoints.py`。
 
+## 0. 编译（只需在代码或仿真器改动后重新执行）
 
-## 1. 数据链路
+终端 0：编译 StepIt 和 MuJoCo。如果当前在 Conda 环境，先退出 Conda；ROS2 使用
+系统 Humble。109 默认是 zsh，因此使用 `setup.zsh`；只有在 bash 终端才使用
+`setup.bash`，不要在 zsh 中 source `setup.bash`。
 
-新增的全局目标链路在策略外部：
+```bash
+cd /home/xjh/workspace/mirlab_run/stepit
+source /opt/ros/humble/setup.zsh
+./scripts/build.sh --release
 
-RViz /goal_pose
-      +
-unitree_mujoco /odom
-      |
-scripts/global_goal_to_waypoints.py
-      |
-      +--> /waypoints_b   std_msgs/msg/Float32MultiArray, 15 floats
-      +--> /remain_time   std_msgs/msg/Float32MultiArray, 5 floats
-
-unitree_mujoco /height_scan_array --> StepIt heightmap
-
-## 2. MuJoCo 配置
-
-`/home/xjh/workspace/unitree_mujoco/simulate/config.yaml` 需要打开：
-
-```yaml
-enable_ray_array: true
-enable_odom: true
-```
-
-`enable_ray_array` 发布 `/height_scan_array`，`enable_odom` 发布 `/odom` 和 TF。
-
-## 3. 编译 unitree_mujoco ROS2 版
-
-如果已经编译过且没有改 C++，可以跳过。
-
-
-cd /home/xjh/workspace/unitree_mujoco
-cd simulate
+cd /home/xjh/workspace/mirlab_run/unitree_mujoco/simulate
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_ROS2=ON
-cmake --build build -j$(nproc)
-
-## 4. 启动 unitree_mujoco
-cd /home/xjh/workspace/unitree_mujoco/simulate/build
-./unitree_mujoco
-
-另开终端确认 topic：
-
-ros2 topic hz /odom
-ros2 topic echo /odom --once
-ros2 topic hz /height_scan_array
-ros2 topic echo /height_scan_array --once
+cmake --build build -j"$(nproc)"
 ```
-## 5. 启动全局目标转 waypoint 脚本
 
-cd /home/xjh/workspace/stepit
+当前 `stepit` 是仓库根目录的 direct checkout；已同步的 `build.sh` 会自动识别这种
+布局并完成配置、构建和安装。
 
-./scripts/global_goal_to_waypoints.py --ros-args \
-  -p odom_topic:=/odom \
-  -p goal_topic:=/goal_pose \
-  -p waypoints_topic:=/waypoints_b \
-  -p remain_time_topic:=/remain_time \
-  -p debug_path_topic:=/global_goal_waypoints_path \
-  -p v_des:=0.50 \
-  -p min_speed:=0.08 \
-  -p target_tolerance:=0.08 \
-  -p heading_tolerance:=0.10 \
-  -p slowdown_distance:=1.0 \
-  -p final_heading_distance:=0.80 \
-  -p yaw_rate_des:=0.80 \
-  -p max_waypoint_distance:=1.35 \
-  -p hold_goal:=true \
-  -p use_goal_heading:=true
+## 1. 启动 MuJoCo
 
-到不了优先调这几个：
-  - 位置过冲：减小 v_des 或增大 slowdown_distance
-  - 最终方向转不过来：增大 yaw_rate_des，比如 1.0
-  - 太早开始转最终方向：减小 final_heading_distance
-  - 太晚才转最终方向：增大 final_heading_distance
-  
-  
-脚本在没有 RViz goal 时会持续发布零 `waypoints_b`，所以可以先启动 StepIt 并进入 PolicyOn，再点击目标。
+终端 A：
 
-确认输出：
+```bash
+cd /home/xjh/workspace/mirlab_run/unitree_mujoco/simulate/build
+./unitree_mujoco
+```
 
-ros2 topic hz /waypoints_b
+## 2. 启动 Nav2 和新 bridge
+
+终端 B：
+
+```bash
+cd /home/xjh/workspace/mirlab_run/stepit
+source /opt/ros/humble/setup.zsh
+./scripts/run_nav2_global_planning.sh --profile smac_hybrid_xy_forward
+```
+
+等待终端出现 lifecycle 或 bridge 已启动后，可先检查：
+
+```bash
+source /opt/ros/humble/setup.zsh
+ros2 action list | grep compute_path_to_pose
+ros2 topic info /waypoints_b --verbose
 ros2 topic echo /waypoints_b --once
 ros2 topic echo /remain_time --once
-ros2 topic echo /global_goal_waypoints_path --once
+```
 
-## 6. 启动 StepIt global policy
+初始时 `/waypoints_b` 应为 15 个零，`/remain_time` 应为 5 个正值。确认 `/waypoints_b`
+只有一个 publisher。
 
-cd /home/xjh/workspace/stepit
+## 3. 启动 StepIt 策略
 
+终端 C：
+
+```bash
+cd /home/xjh/workspace/mirlab_run/stepit
 export STEPIT_NETIF=lo
 export STEPIT_UNITREE2_DOMAIN_ID=1
-export STEPIT_PLUGIN_DIRS=$PWD/install/lib
-export LD_LIBRARY_PATH=$PWD/install/lib:$PWD/extern/robot_sdk/unitree_sdk2/thirdparty/lib/$(uname -m):${LD_LIBRARY_PATH}
+export STEPIT_PLUGIN_DIRS="$PWD/install/lib"
+export LD_LIBRARY_PATH="$PWD/install/lib:$PWD/extern/robot_sdk/unitree_sdk2/thirdparty/lib/$(uname -m)${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 ./install/bin/stepit \
   -P ros2 \
@@ -103,41 +73,785 @@ export LD_LIBRARY_PATH=$PWD/install/lib:$PWD/extern/robot_sdk/unitree_sdk2/third
   -c joystick \
   -f joystick@unitree2 \
   -r g1 \
-  -p neuro@$PWD/policies/g1_traj_finetune_v2_global \
+  -p "neuro@$PWD/policies/g1_traj_finetune_v2_global" \
   -- --ros-args --remap __ns:=/stepit
-
-控制台顺序：
-
-Agent/StandUp
-
-PolicyOn 前先确认 `/waypoints_b` 是 15 个 0，或者至少目标还没给出。
-
-Agent/PolicyOn
-
-
-## 7. 启动 RViz
-
-rviz2
-
-RViz 设置：
-  
-  RGB对应xyz
-- Fixed Frame: `odom`
-  Add TF
-  #2D Goal Pose Estimate确认世界系
-- 使用 `2D Goal Pose` 工具发目标
-- 目标 topic: `/goal_pose`
-- 添加 `Path` display，topic 选择 `/global_goal_waypoints_path`。这个 topic 会显示脚本当前发给策略的 5 个全局前瞻点，方便判断脚本是否在正确收敛到终点。
-
-
-## 9. 迁移到实物
-
-实物部署时脚本接口保持不变：
-
-```text
-/goal_pose + /odom 或 TF -> /waypoints_b + /remain_time
 ```
 
-只需要把 `/odom` 来源从 MuJoCo ground truth 换成真实机器人定位，例如 Unitree 里程计、VIO、SLAM 或 mocap。策略和 StepIt 的 `g1_traj_finetune_v2_global` 输入接口不需要变。
+在 StepIt 控制台中依次执行：
 
-注意：脚本假设 RViz goal 和 `/odom` 在同一个坐标系里。sim 中 RViz Fixed Frame 用 `odom`；实机如果 RViz 在 `map`，需要保证 `/odom` 也是 map 系，或者后续把脚本改成通过 TF 做 `map -> base_link` 查询。
+```text
+Agent/StandUp
+Agent/PolicyOn
+```
+
+`PolicyOn` 前再确认 `/waypoints_b` 长度为 15、`/height_scan_array` 长度为 187。
+
+## 4. 一键启动诊断采集（推荐每次实验都开）
+
+终端 D：不需要重新编译，只运行下面一个脚本。建议在发送目标前启动，复现结束后
+按 `Ctrl-C`，脚本会自动落盘并生成摘要。
+
+```bash
+cd /home/xjh/workspace/mirlab_run/stepit
+source /opt/ros/humble/setup.zsh
+./scripts/collect_nav2_bridge_diagnostics.py --label smac_test
+./scripts/collect_nav2_bridge_diagnostics.py --label smac_pacing_fix
+```
+
+终端开始和结束时都会打印本次输出目录，例如：
+
+```text
+/home/xjh/workspace/mirlab_run/stepit/diagnostics/nav2_bridge_runs/20260831_153000_smac_test
+```
+
+采集内容包括原始全局路径、实际 sampled path、`waypoints_b`、`remain_time`、bridge
+状态切换、目标、odom 位姿差分速度/加速度、机体 roll/pitch、IMU、twist、策略 action、
+关节状态和 `/height_scan_array`。50 Hz 的 waypoint、remain time 和 sampled path 会逐条
+完整记录，不会被 20 Hz 汇总表降采样；高频数据通过独立写线程落盘，队列溢出会在摘要
+中明确报告。停止后自动生成 `summary.txt`、`summary.json`、`samples.csv`、
+`events.jsonl`、`raw_paths.jsonl`、`sampled_paths.jsonl`、`waypoints.jsonl`、
+`remain_time.jsonl`、`odometry.jsonl`、`imu.jsonl`、`actions.jsonl`、
+`joint_states.jsonl`、`height_scan.jsonl` 和 bridge 参数快照。
+
+为了让问题前后都有上下文，建议启动采集后先站立约 5 秒，再连续完成 2～3 次典型
+目标测试；问题出现后继续运行约 5 秒再按 `Ctrl-C`。之后只需把终端打印的输出目录
+告诉 Codex，由 Codex 直接登录 109 检查，不需要手工摘录或解释日志。
+
+若只想让脚本定时停止，可加 `--duration 60`。正式问题复现建议仍使用 `Ctrl-C`，避免
+异常刚发生时采集已经结束。
+
+## 5. 发送目标和最小验证
+
+终端 E：
+
+```bash
+source /opt/ros/humble/setup.zsh
+rviz2 -d /home/xjh/workspace/mirlab_run/stepit/nav2/rviz/sim_global_planning.rviz
+```
+
+RViz Fixed Frame 设为 `map`，使用 `2D Goal Pose` 发送一个目标。先一次只发一个目标，
+不要在运动中连续点击。观察：
+
+```bash
+ros2 topic echo /nav2_waypoint_status
+ros2 topic echo /remain_time
+ros2 topic echo /nav2_sampled_waypoints_path
+```
+
+正常运行时状态应从 `PLANNING/PATH_READY` 进入 `ACTIVE`，`remain_time` 随时间倒计时；
+机器人落后时可能短暂进入 `ACTIVE_PACING`，此时五个 deadline 整体小幅后移，但
+0.50 s 间隔和 waypoint 世界坐标不变。普通周期重规划不应先瞬间发全零。Smac XY
+终点正常顺序为 `TERMINAL_APPROACH -> GOAL_CAPTURE_BRAKING ->
+GOAL_CAPTURE_SETTLING -> GOAL_REACHED`。若错过终点，则先有界刹停，再安全重规划，
+不会在仍有惯性时直接切换新路径。
+
+当前 `smac_hybrid_xy_forward` 的 bridge 直线参考速度上限为 `0.80 m/s`，舒适终点
+减速度为 `0.50 m/s²`，弯道横向加速度上限为 `0.30 m/s²`。5 个 waypoint、15 维
+`/waypoints_b` 和 0.50 s deadline 间隔仍与训练接口完全一致；没有把采样间距固定为
+0.10 m，也没有修改训练任务。
+
+---
+
+# g1_traj_finetune_v2：全局路径 sim-to-sim 流程
+
+本文说明在 `unitree_mujoco + StepIt + Nav2` 中，如何把任意符合 ROS
+`nav_msgs/Path` 接口的全局规划结果转换成
+`g1_traj_finetune_v2_global` 能执行的 waypoint。桥接节点是规划器和策略
+之间的唯一适配层：规划器只提供几何路径，bridge 负责清洗路径、做速度和
+加速度时间参数化、维护连续参考轨迹，并发布策略 ABI。
+
+## 1. 数据流和核心契约
+
+```text
+RViz /goal_pose
+       |
+       v
+Nav2 /compute_path_to_pose  --->  nav_msgs/Path
+       |
+       v
+scripts/nav2_global_goal_to_waypoints.py
+       |  persistent timed reference, 50 Hz
+       +--> /waypoints_b                 Float32MultiArray, 15 floats
+       +--> /remain_time                 Float32MultiArray, 5 floats
+       +--> /nav2_waypoint_status        String
+       +--> /nav2_global_path            raw planner Path
+       +--> /nav2_sampled_waypoints_path actual 5-point world Path
+
+unitree_mujoco: /height_scan_array, /odom, world -> odom -> base_link
+sim launch:     map -> world (identity TF)
+```
+
+策略输入的固定 ABI 不变：
+
+```text
+/waypoints_b.data = [x1_b, y1_b, heading1_b, ..., x5_b, y5_b, heading5_b]
+/remain_time.data = [t1, t2, t3, t4, t5]
+```
+
+- `x_b`、`y_b` 和 `heading_b` 都是相对于当前 `base_link` 的量。
+- 普通平移中的 `heading_b` 是 waypoint 的运动方向相对机器人当前 yaw 的
+  角度，不是机器人机身必须在该时刻达到的姿态，也不能把它当成真实
+  yaw-rate。只有独立的终端 `ALIGNING_YAW` 阶段才把它用作姿态对齐目标。
+- 每个 waypoint 对应同一条连续世界轨迹上的未来目标，不是五个相互独立的
+  “最近路径点”。
+- bridge 以 50 Hz 发布，`num_waypoints=5`，相邻目标 deadline 间隔
+  `waypoint_interval=0.50 s`。
+- deadline 在轨迹建立时固定为 `now+0.5`、`now+1.0`、…、`now+2.5`。
+  发布的 `remain_time[i]` 是 `deadline[i]-now`，因此在连续倒计时，不能在
+  每次 50 Hz 发布时重置为 `[0.5, 1.0, 1.5, 2.0, 2.5]`。
+- 第一个 deadline 到期后，队列只删除已到期的前缀并在末尾追加未来点；当前
+  的四个未来目标和它们的时间轴保持不变。
+
+这也是为什么不能把采样间距简单固定成 `0.10 m`：策略的输入契约是五个
+按时间推进的目标，不是五个等弧长点。固定 0.10 m 在加速、弯道、刹车和
+终点处会对应不同的到达时间，既不能表达训练时的 deadline，也可能迫使
+策略面对超出训练速度/加速度分布的目标。当前实现让距离由时间参数化和
+速度约束自然产生；起步时第一个空间位移可能接近 0.10 m，但这不是硬编码
+的距离 ABI。如果实验表明某组速度/加速度参数下实际位移约为
+0.10 m 时比较稳定，可以将它作为调参结果观察，但不能在 bridge
+中强制每个 waypoint 都是 0.10 m 间距。
+
+零指令也使用同一条滚动 deadline 时钟。`RollingDeadlineClock` 会让
+`remain_time` 在站立和等待期间继续倒计时并滚动，避免每个发布周期重新
+产生一组静态的 `[0.5, 1.0, 1.5, 2.0, 2.5]`。
+
+空间间距不再由固定的离散距离档位决定。bridge 沿路径弧长做
+时间积分，空间间距由当前速度、曲率、起步加速和终点制动共同产生。
+`nav2_params.yaml` 保留 NavFn 的原始保守参数，并为
+`smac_hybrid_xy_forward` 单独提供更快的启动参数：
+
+| 参数 | NavFn/其他 profile | Smac Hybrid XY Forward | 作用 |
+| --- | ---: | ---: | --- |
+| `cruise_speed` | `0.30 m/s` | `0.80 m/s` | 直线巡航上限 |
+| `max_acceleration` | `0.80 m/s²` | `1.20 m/s²` | 起步和加速上限 |
+| `max_deceleration` | `1.00 m/s²` | `1.00 m/s²` | 安全、重规划和异常状态的最大制动能力 |
+| `terminal_deceleration` | `1.00 m/s²` | `0.50 m/s²` | 正常到站使用的舒适减速度 |
+| `max_lateral_acceleration` | `0.25 m/s²` | `0.30 m/s²` | 根据曲率降低弯道速度，抑制平地偏航摆振 |
+| `max_tracking_urgency` | 禁用 | 默认禁用（`0.0`） | 可选 deadline pacing 实验开关，不属于当前推荐运行配置 |
+| `emergency_speed_upper_bound` | `1.20 m/s` | `1.20 m/s` | odom 过期时的独立物理速度假设，不与 pacing 限制混用 |
+| `max_yaw_rate` | `0.80 rad/s` | `0.80 rad/s` | 平移时作为几何曲率速度上限，独立原地旋转时限制 yaw 步长 |
+| `integration_step` | `0.02 s` | `0.02 s` | 时间参数化积分步长 |
+
+这些数值都低于训练轨迹的速度/加速度边界，用于先验证策略和 bridge 的
+时空契约。启动时会验证最大速度下的完整制动时间不超过未承诺的
+waypoint horizon。正常安全制动仍检查
+`cruise_speed / max_deceleration <= num_waypoints * waypoint_interval - replan_commit_time`；
+Smac 的舒适终点制动还把 `terminal_response_time=0.20 s` 和
+`terminal_braking_margin=0.10 m` 换算成时间预算一同校验。轨迹在距离终点尚有动态
+制动距离时就会降速，不是进入 `goal_tolerance` 后才开始停车。
+提高速度必须以 A/B 数据为依据，不能通过重新引入 waypoint 距离档位来调速。
+
+## 2. Bridge 的执行模型
+
+### 2.1 路径输入
+
+bridge 接受任意规划器输出的 `nav_msgs/Path`，但输入必须满足以下基本条件：
+
+- `header.frame_id` 明确且与 costmap frame 一致；缺省 frame 按 `global_frame`
+  处理。路径 frame、costmap frame 和 TF 链必须处于同一个稳定坐标约定。
+- pose 坐标和 quaternion 均为有限值。
+- 所有包含平移的 planner Path 都统一清洗为 XY Polyline。planner pose 的
+  orientation 不直接传给策略；相邻重复 XY 点和夹在路径中的原地旋转段
+  不会变成第二套普通导航 yaw 轨迹。只有明确的终端姿态阶段使用同 XY 的
+  CanonicalPath。
+- 有 costmap 时，路径中心线和即将发布的目标会做碰撞检查；没有新鲜的
+  costmap 时不能把路径当成已验证的安全路径。
+- active 轨迹执行期间不接受 costmap frame 突然切换；新消息会被拒绝，
+  已有快照按原接收时间继续老化，超时后自然进入制动。
+- bridge 不再把 `first bearing`、command-heading 跳变或固定最小转弯半径
+  作为一票否决的硬规则；曲率只用于时间参数化限速。训练允许首个目标在
+  机器人侧面或后方，因此 `h0=π/2`、`π` 都是合法策略输入。
+- 五个平移目标生成完成后，世界系 heading 严格按训练侧
+  `simple_heading` 规则计算：
+
+  ```text
+  h0 = bearing(激活时机器人位置, p0)
+  h1 = bearing(p1, p2)
+  h2 = bearing(p2, p3)
+  h3 = bearing(p3, p4)
+  h4 = h3
+  ```
+
+  对应 XY 位移不大于 `1e-3 m` 时沿用前一个 heading；该阈值与
+  训练端一致，用于判定几乎没有运动的重复点，不是 waypoint 距离档位。
+  队列滚动时，已有目标的 pose、
+  heading 和 deadline 原样左移，只给新追加的末点生成 heading；这与训练
+  command buffer 的滚动方式一致。bridge 不会独立平滑或 clamp heading，
+  否则会造成 XY 与运动方向不一致。
+
+Nav2 只决定几何路线。bridge 不假设路径来自 NavFn、Smac 或其他特定规划器，
+但会拒绝无法解析、包含非有限值、坐标系不一致或穿过已知碰撞区的原始路径，
+并在状态中给出原因。可解析不等于一定适合当前动力学；剩余差异由 XY
+速度/加速度、几何曲率限速和安全门控处理。
+
+### 2.2 时间参数化
+
+`nav2_waypoint_trajectory.py` 中的 `PersistentTrajectory` 保存：
+
+- 当前 active 路径；
+- 当前队列中五个 `TimedWaypoint` 的世界坐标、deadline、路径进度和速度；
+- 路径末端进度及速度；
+- `TRACKING`、`TERMINAL_APPROACH` 或 `BRAKING` 模式。
+
+每个积分步先计算速度上限：
+
+```text
+v <= cruise_speed
+v <= sqrt(2 * terminal_deceleration * distance_to_goal)
+v <= sqrt(max_lateral_acceleration / curvature)
+v <= max_yaw_rate / curvature
+```
+
+然后施加加速度/减速度限制，得到五个绝对时间目标。机器人移动时只重新
+计算这些世界目标在 `base_link` 中的表达，不重新把整条 horizon 锚定到
+机器人当前位置。这样 `/waypoints_b` 的数值可以随 TF 变化，但它们代表的
+世界目标和 deadline 仍然连续。平移 heading 从最终五个 XY target 按
+`simple_heading` 推导；`max_yaw_rate / curvature` 只是降低急弯处的平移
+速度，不能解释为对 command-heading 差值或真实机身 yaw-rate 的保证。
+只有独立的同 XY 终端对齐才直接限制 yaw 步长。速度观测不直接信任仿真器可能不一致的
+twist 字段；bridge 由相邻 `/odom` 位姿差分估计平面速度和 yaw 速度，使用最新连续两个
+区间的保守估计。单帧高速尖峰不会被当成持续超速，连续两帧高速则会立即抬高估计。速度只在
+`odom_timeout` 内用于终点制动、路径接管和 settle；新目标、完成、故障或停稳后重规划都会
+同时清除样本、标量速度和时间戳，不复用上一次执行的旧速度。
+
+Smac XY 默认不再使用 deadline pacing。`20260902_223144_smac_test`
+显示，旧实现在机器人已经越过首 waypoint 后仍用欧氏距离判定“落后”，
+使首点 `remain_time` 长时间停在约 `0.007 s`，继而反复触发
+`BRAKING_TRACKING_LAG -> safety replan`。该实验中此制动发生 32 次，
+而 `20260901_211009_smac_test` 基线为 0 次。因此推荐配置将
+`smac_hybrid_max_tracking_urgency` 固定为 `0.0`。可选代码仍保留供单独实验，
+但已增加路径进度保护：机器人越过首点后不得再延后 deadline 或消耗 pacing budget。
+NavFn 依然禁用该功能，行为不变。
+
+### 2.3 重规划：active/pending 和承诺窗口
+
+收到新规划结果时，bridge 同时维护：
+
+```text
+active_reference   当前正在给策略执行的时间轨迹
+pending_path       新收到、正在验证/等待接入的路径
+```
+
+重规划处理顺序如下：
+
+1. 检查新路径 frame、有限值和已知碰撞，并统一为 XY 路径契约。
+2. 在新路径上寻找与 active 轨迹承诺末端距离最近的几何投影。
+   当前对存在回环或自交的新路径不提供严格的单调前向投影保证。
+3. 保留未来 `replan_commit_time=0.50 s` 内已经承诺的 waypoint 和 deadline。
+4. 如果新路径能在 `replan_join_distance=0.35 m` 内接入，Smac 会检查整个新后缀的
+   每一段 XY 加/减速度、heading 变化，以及新旧对应 waypoint 的位置和 heading 偏移；
+   全部连续才替换承诺窗口后的后缀，原 deadline 保持不变。NavFn 继续使用原先只检查
+   第一段 XY 的 legacy 接入行为。
+5. Smac 的普通 `PERIODIC` 刷新若连续性检查失败，会丢弃新路径并继续执行仍安全的旧
+   reference，避免 `ACTIVE -> BRAKING -> ACTIVE` 抖动；偏离、安全故障或新目标导致的
+   不可接入仍进入 `BRAKING`。新路径只有在参考轨迹和真实 odom 线/角速度连续停稳
+   `0.20 s` 后才能接管。NavFn 保持原先的制动接管分支。
+6. 新旧路径不能在一个 50 Hz tick 中整体替换，更不能因为一次普通重规划
+   先发全零再恢复运动。
+
+ACTIVE 且不在终点姿态对齐时，bridge 会按 `replan_period=1.0 s`
+请求周期重规划；有 pending 或未完成的 planner 请求时不重复发起。
+请求和回调期间 active 时间轨迹继续滚动，新路径仍必须通过上述承诺
+窗口和 XY 可达性检查才能接入。
+
+规划请求带有新的当前时间戳，不能复用 RViz 首次点击的旧 stamp。新目标会
+取消旧的异步请求并使旧回调失效，防止旧结果覆盖新目标。如果已有 active
+参考，bridge 保留当前世界参考并以减速度上限刹车；只有 idle bridge 才会
+清空轨迹并进入等待规划。这样新 goal 不会制造一个“先全零、再突然恢复”
+的控制缺口。
+
+### 2.4 失败和安全行为
+
+失败分为两类：
+
+- `WAITING_FOR_NAV2`、普通规划失败、TF/costmap 短时缺失、异步重规划暂时
+  不可接入：如果有 active 世界参考，继续保持该参考或进入有界 `BRAKING`。
+  TF 短时缺失时，bridge 最多在 `transient_failure_timeout=0.30 s` 内用新鲜
+  `/odom` 位姿增量外推 base pose，同时立即刹车；无法可靠外推则安全停机。
+  costmap 超过 `costmap_timeout=1.00 s` 未更新时，禁止接入新路径并立即生成
+  受控制动 horizon。
+- 起点已经在碰撞区、当前轨迹刹车后仍确认会碰撞、目标非法，或其他无法证明
+  继续执行安全的真实故障：安全门控发布 15 个零。如果没有 active 轨迹，
+  普通规划失败也只能发布零并等待下一次受节流的规划机会。
+
+Smac XY 的 TF fallback、pacing 耗尽、costmap 过期和前方碰撞刹车使用同一条
+安全接口：获得真实位姿后，只在进入制动的那一刻从实测速度和路径进度重建 horizon。
+已处于 `BRAKING` 时不会每个 50 Hz 周期重新锚定，因此既不会保留机器人身后的过时点，
+也不会把制动参考变成跟随机器人移动的滑动目标。NavFn 仍使用原有 committed-prefix 制动路径。
+
+因此“普通重规划失败立即全零”不再是控制流程。只有没有可安全执行的轨迹
+时才使用零指令；零指令不能被误解为新路径的正常过渡段。
+
+### 2.5 终点流程
+
+机器人接近终点时，bridge 不把五个点突然压成全零，也不以单个采样周期的
+位置误差判定到达。Smac XY 使用真实 odom 速度计算提前减速距离：
+
+```text
+brake_distance = v_actual² / (2 * terminal_deceleration)
+               + v_actual * terminal_response_time
+               + terminal_braking_margin
+```
+
+在当前 `v_actual=0.80 m/s`、`terminal_deceleration=0.50 m/s²`、响应 `0.20 s`、
+余量 `0.10 m` 下，触发距离约为 `0.90 m`。进入该范围后保留 0.50 s 承诺前缀，
+从实测速度重建未承诺后缀并按舒适减速度逐步停车。可行性不只检查剩余 horizon 时间和
+路径长度，还会把机器人真实投影进度与首个承诺 anchor 比较。若实测状态已无法在 anchor 前
+舒适减速，则放弃该过时 anchor，从真实进度重建 `max_deceleration=1.00 m/s²` 的整条有界紧急
+制动 horizon。即使已经越过 planner endpoint，紧急制动也会沿末端切线向前延伸，不会把首点
+重新放到机器人身后。`TERMINAL_APPROACH` 后缀只允许保持或减速，并预留一个积分步的停车距离，
+正常终点参考不会先加速或越过 planner endpoint；也不会把超速值伪装成 `0.80 m/s` 的
+正常追踪指令。NavFn 使用原有 `0.30 m/s` 参数，不进入这套
+Smac 专属提前终点状态。纯旋转路径不会产生 XY 外推。
+
+planner 返回的最后一个 pose 是 planner endpoint，不应默认等于用户请求的
+真实 goal；例如 tolerance、地图边界或 planner 的 approach 逻辑都可能让它
+提前结束。bridge 会把真实 goal 变换到 path frame，并要求 endpoint 与真实
+goal 的距离不超过 `goal_tolerance=0.15 m`；到达判定也始终测量机器人到真实
+goal 的误差，而不是到 planner endpoint 的误差。所有要求终点 yaw 的
+profile 都在平移稳定后进入独立 `ALIGNING_YAW`。进入该状态时把
+alignment trajectory 的所有 XY 冻结在当前机器人位置，只逐步改变
+yaw；变换后的真实 goal XY/yaw 仍用于最终 settle 判定。这样
+不会把最后几厘米平移和原地旋转混成一组指令，也不会污染普通平移的
+`simple_heading` 语义。
+
+NavFn XY profile 的完成条件保持不变：
+
+```text
+position_error <= 0.15 m
+planar_speed   <= 0.10 m/s
+以上条件连续保持 goal_hold_time=0.50 s
+```
+
+需要最终 yaw 的 profile 还要求：
+
+```text
+abs(yaw_error)       <= 0.10 rad
+abs(yaw_rate_from_odom_pose) <= 0.15 rad/s
+```
+
+`smac_hybrid_xy_forward` 额外使用终点捕获锁存。机器人首次真实进入
+`goal_tolerance` 后进入 `GOAL_CAPTURE_BRAKING`，立即取消 pending/in-flight
+重规划，并从机器人实测路径进度和实测速度重建整条有界制动 horizon。
+进入捕获时不再保留可能已经位于机器人身后的过时 committed prefix。捕获后使用
+`goal_capture_release_tolerance=0.30 m` 作为制动滞回包络：只有已经真实进入过 0.15 m，
+且最终真实位置仍在 0.30 m 内、真实线速度和角速度连续满足 hold，才允许完成。这样小幅
+惯性漂移不会触发 forward-only Dubins 回程圈，也不会把任意远处的停止误判为到达。
+参考轨迹停稳后切换 `GOAL_CAPTURE_SETTLING`，发布训练分布中的全零站立指令。
+
+若机器人在两个控制周期之间跨过 0.15 m 容差，bridge 会记录 terminal 阶段距目标的
+最近值：进入过 `goal_capture_release_tolerance=0.30 m` 又离开时转为
+`BRAKING_TERMINAL_MISSED`。未锁存捕获而停在 0.15 m 外的 terminal 制动，以及已锁存后漂出
+0.30 m 释放包络的捕获制动，都会在参考和真实机器人停稳后清空旧参考，从静止发起一次
+safety replan。已经真实进入过 0.15 m 的捕获则允许在 0.30 m 滞回包络内停稳完成，避免小幅
+惯性漂移又触发 forward-only 回程圈。因此既不会带着惯性切路径，也不会永久卡在 terminal 状态。
+
+满足相应条件后才进入 `GOAL_REACHED`。`/odom` 缺失或超时不能满足 settle
+条件。终点零指令表示已经进入捕获并稳定停住，不表示“bridge 规划失败”。
+
+## 3. 四个 profile 的边界
+
+profile 只在启动时选择，运行中不能热切换。`num_waypoints`
+和 `waypoint_interval` 也是启动时锁定的策略 ABI，运行中修改会被
+拒绝。四个 profile 共用同一套时间参数化、碰撞检查、重规划和策略 ABI。
+
+| profile | Nav2 planner | 路径语义 | 适用边界 |
+| --- | --- | --- | --- |
+| `navfn_xy_legacy` | `GridBased` / NavFn | planner Path 归一化为 XY，输出按 `simple_heading` 编码 | 推荐稳定基线；不要求终点 yaw |
+| `smac_hybrid_xy_forward` | `SmacHybrid` / DUBIN | 搜索阶段使用 forward SE(2)，bridge 仍只消费 XY 几何；单独使用 0.80 m/s 动力学参数和 XY 终点捕获 | 用于比较受转弯半径约束的全局路线；不要求终点 yaw，进入容差后不再重规划返回圈 |
+| `smac_terminal_yaw` | `SmacHybrid` / DUBIN | 多个 approach 候选选平移路径，再独立对齐真实目标 yaw | 目标 yaw 必须满足时使用；最终阶段为 `ALIGNING_YAW` |
+| `smac_lattice_full_se2` | `SmacLattice` | 搜索使用 lattice，平移输出仍归一化为 XY；终点 yaw 独立对齐 | 实验 profile；当前 lattice 是 differential-drive、5 cm grid、1 m turning radius，不代表四足专用 primitive |
+
+共同限制：
+
+- `SmacHybrid` 使用 `DUBIN`，`allow_reverse=false`；lattice 使用
+  `allow_reverse_expansion=false`。
+- Smac 的最小转弯半径配置为 `1.0 m`，这是 planner 的搜索约束；bridge
+  对路径曲率做限速，而不是再次用同一个半径阈值拒绝整条路径。
+- planner Path 中间的 pose yaw/原地旋转不直接进入普通策略指令。若 profile
+  要求终点 yaw，bridge 在平移 settle 后显式进入独立对齐状态。
+- 不存在自动从 Smac fallback 到 NavFn。`NO_PATH`、`UNTRACKABLE_PATH` 和
+  `UNSAFE_PATH` 都必须作为当前 profile 的真实结果处理。
+
+## 4. 109 上的启动顺序
+
+以下命令在 `/home/xjh/workspace/mirlab_run` 上执行。Nav2 和 bridge 使用
+系统 ROS Humble 与 `/usr/bin/python3`，不要让 Conda 的 Python 接管它们。
+
+### 4.1 可选：生成静态地图和 MuJoCo 场景
+
+只有修改障碍物定义时才需要执行：
+
+```bash
+cd /home/xjh/workspace/mirlab_run/stepit
+/usr/bin/python3 nav2/generate_static_world.py \
+  --mujoco-scene ../unitree_mujoco/unitree_robots/g1/scene_nav2.xml
+```
+
+`nav2/worlds/simple_columns.json` 是导航障碍物和可通行地形的单一数据源。
+`cylinders` 同时进入 PGM 和 MuJoCo；`traversable_staircases` 只生成到
+MuJoCo 场景和 RViz Marker，不写入 PGM，因此 Nav2 不会把楼梯踏步当成
+障碍物。当前楼梯中心线为 `y=-5.0 m`，入口约为 `(-3.45,-5.0)`，
+平台中心约为 `(0.15,-5.0)`，出口约为 `(3.45,-5.0)`。
+
+### 4.2 启动 MuJoCo
+
+如果 C++ 仿真程序尚未构建：
+
+```bash
+cd /home/xjh/workspace/mirlab_run/unitree_mujoco/simulate
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_ROS2=ON
+cmake --build build -j$(nproc)
+```
+
+启动：
+
+```bash
+cd /home/xjh/workspace/mirlab_run/unitree_mujoco/simulate/build
+./unitree_mujoco
+```
+
+### 4.3 启动 Nav2 和唯一 bridge
+
+四条命令互斥，一次只选择一条。推荐先用 NavFn 基线：
+
+```bash
+cd /home/xjh/workspace/mirlab_run/stepit
+conda deactivate
+./scripts/run_nav2_global_planning.sh --profile navfn_xy_legacy
+```
+
+其他 profile：
+
+```bash
+./scripts/run_nav2_global_planning.sh --profile smac_hybrid_xy_forward
+./scripts/run_nav2_global_planning.sh --profile smac_terminal_yaw
+./scripts/run_nav2_global_planning.sh --profile smac_lattice_full_se2
+```
+
+不要再启动旧的 `global_goal_to_waypoints.py`、`smooth_global_goal_to_waypoints.py`
+或 `arc_global_goal_to_waypoints.py`。它们也可能发布 `/waypoints_b`，会破坏
+唯一 publisher 契约。
+
+### 4.4 启动 StepIt global policy
+
+另开终端：
+
+```bash
+cd /home/xjh/workspace/mirlab_run/stepit
+export STEPIT_NETIF=lo
+export STEPIT_UNITREE2_DOMAIN_ID=1
+export STEPIT_PLUGIN_DIRS="$PWD/install/lib"
+export LD_LIBRARY_PATH="$PWD/install/lib:$PWD/extern/robot_sdk/unitree_sdk2/thirdparty/lib/$(uname -m)${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+./install/bin/stepit \
+  -P ros2 \
+  -c console \
+  -c joystick \
+  -f joystick@unitree2 \
+  -r g1 \
+  -p "neuro@$PWD/policies/g1_traj_finetune_v2_global" \
+  -- --ros-args --remap __ns:=/stepit
+```
+
+在 StepIt 控制台依次执行：
+
+```text
+Agent/StandUp
+Agent/PolicyOn
+```
+
+执行 `PolicyOn` 前确认 `/waypoints_b` 是 15 个零，
+`/height_scan_array` 长度为 187。
+
+### 4.5 启动 RViz 和发送目标
+
+```bash
+source /opt/ros/humble/setup.zsh
+rviz2 -d /home/xjh/workspace/mirlab_run/stepit/nav2/rviz/sim_global_planning.rviz
+```
+
+RViz 设置：
+
+- Fixed Frame：`map`。
+- 添加 `/map`、`/global_costmap/costmap`、TF。
+- 添加 `/nav2_global_path` 查看 planner 原始路径。
+- 添加 `/nav2_sampled_waypoints_path` 查看实际五个世界目标。
+- `/nav2_traversable_terrain` 是只用于显示的楼梯轮廓，不进入 costmap。
+- 使用 `2D Goal Pose` 发布 `/goal_pose`。对于 yaw profile，箭头方向是目标 yaw。
+
+首次上楼梯不要直接点远端。先发入口中心附近目标 `(-3.8,-5.0)`，
+等机器人停稳后再发平台中心 `(0.15,-5.0)`；这样可以避免 2D planner 在
+不知道楼梯进入方向的情况下从侧面接近平台。
+
+一次测试只发送一个目标；不要在机器人运动时连续点击新目标。新目标会
+保留当前参考并有界刹车后重新规划，但连续点击仍会制造不属于单目标
+sim-to-sim 验收的外部扰动。
+
+## 5. 启动后验证
+
+先确认 Nav2 lifecycle、TF 和传感器：
+
+```bash
+source /opt/ros/humble/setup.zsh
+ros2 lifecycle get /map_server
+ros2 lifecycle get /planner_server
+ros2 action list | grep compute_path_to_pose
+ros2 run tf2_ros tf2_echo map base_link
+ros2 topic hz /odom
+ros2 topic hz /height_scan_array
+```
+
+期望 `map_server`、`planner_server` 均为 `active`，TF 链为：
+
+```text
+map -> world -> odom -> base_link
+```
+
+再检查策略 ABI 和 bridge 状态：
+
+```bash
+ros2 topic hz /waypoints_b
+ros2 topic echo /waypoints_b --once
+ros2 topic echo /remain_time --once
+ros2 topic hz /global_costmap/costmap_raw
+ros2 topic echo /nav2_waypoint_status --once
+ros2 topic echo /nav2_global_path --once
+ros2 topic echo /nav2_sampled_waypoints_path --once
+```
+
+也可以让随仓库提供的检查器抓取一帧，验证单帧的 15/5 ABI、
+`remain_time` 正值/递增/相邻间隔，以及基于该帧 `remain_time` 的 XY
+速度/加速度：
+
+```bash
+/usr/bin/python3 scripts/validate_waypoint_conditions.py --ros --once
+```
+
+该工具不会把 command heading 当成机器人 yaw-rate，也不会用单帧
+heading-to-chord 关系否决 rolling command。它不能单独证明跨周期的
+deadline 确实在倒计时、deadline 没有每帧重置、队列正确滚动，或承诺窗口
+保持不变。这些时序性质必须用轨迹契约单测、多周期日志或 rosbag 验证。
+
+应满足：
+
+- `/waypoints_b` 恰好 15 个 float；`/remain_time` 恰好 5 个 float。
+- 运动过程中 `remain_time` 随时间倒计时，第一项到期后队列向前推进。
+- `/nav2_sampled_waypoints_path` 与 `/waypoints_b` 对应同一组世界目标，
+  不是每个周期从机器人位置重新生成的独立路径。
+- `/global_costmap/costmap_raw` 应持续更新且时间上新；costmap 是 bridge
+  安全判定的输入，不能只看一次旧快照。bridge 按接收时间执行
+  `costmap_timeout=1.00 s` 新鲜度门控；超时快照不参与新路径碰撞判定，也
+  不能用于激活 pending path。
+- `/nav2_waypoint_status` 前缀包含当前 profile。
+
+确认 `/waypoints_b` 只有一个 publisher：
+
+```bash
+ros2 topic info /waypoints_b --verbose
+ros2 node info /nav2_global_goal_to_waypoints
+```
+
+publisher 应只有 `nav2_global_goal_to_waypoints`。如果还有旧 bridge、smooth
+或 arc 节点，先停止它们再测试。
+
+验证 profile 参数是启动时固定的：
+
+```bash
+ros2 param get /nav2_global_goal_to_waypoints planner_profile
+ros2 param set /nav2_global_goal_to_waypoints planner_profile smac_lattice_full_se2
+ros2 param set /nav2_global_goal_to_waypoints num_waypoints 4
+```
+
+后两条命令都应失败，并包含对应参数的
+`is immutable after startup`。
+
+## 6. 状态解释
+
+状态消息都带 profile 前缀，例如
+`navfn_xy_legacy:ACTIVE`。
+
+| 状态 | 含义 | waypoint 行为 |
+| --- | --- | --- |
+| `WAITING_GOAL` | 尚未收到目标 | 15 个零 |
+| `GOAL_RECEIVED` | idle bridge 收到新目标，清空旧轨迹并等待规划 | 15 个零 |
+| `NEW_GOAL_BRAKING` | active bridge 收到新目标，保留世界参考并有界刹车 | 继续发送制动轨迹 |
+| `WAITING_FOR_NAV2` / `PLANNING` | 等待或请求规划器 | active 时保持/刹车；idle 时为零 |
+| `PATH_READY` | 已通过路径验证，开始建立时间轨迹 | 下一周期开始非零 |
+| `ACTIVE` | 按 active 时间轨迹跟踪 | 非零，50 Hz |
+| `PATH_REPLAN_BLENDED` | 新路径已在承诺窗口后平滑接入 | 连续非零 |
+| `PATH_REPLAN_REJECTED_CONTINUITY` | Smac 普通周期路径不能连续接入，丢弃本次刷新 | 继续执行安全旧 reference |
+| `ACTIVE_PACING` / `TERMINAL_APPROACH_PACING` | 仅在显式开启可选 pacing 实验时可见；推荐配置不应出现 | 世界 waypoint 不变，0.50 s 间隔不变 |
+| `REPLAN_WAITING_FOR_BRAKE` / `BRAKING` | 新路径不能直接接入，正在受控减速 | 仍发送有界制动轨迹 |
+| `BRAKING_WAITING_FOR_FRESH_COSTMAP` / `BRAKING_NO_FRESH_COSTMAP` | 请求规划或执行期间 costmap 缺失/超时 | 禁止接入路径并发送制动轨迹 |
+| `BRAKING_TF_ODOM_FALLBACK` | TF 短时中断，以通过跳变检查的 odom 增量暂时重编码 | 立即制动；最多持续 0.30 s |
+| `TERMINAL_APPROACH` | Smac XY 根据实测速度提前舒适减速 | 沿原路径逐步缩短空间步长 |
+| `BRAKING_TERMINAL_OVERSPEED` / `BRAKING_TERMINAL_MISSED` | 舒适停车不可表达，或接近后错过捕获包络 | 使用实测速度和真实路径进度重建整条最大有界制动 horizon |
+| `BRAKING_TERMINAL_MISSED_STALE_ODOM` | 错过捕获包络时 odom 速度已过期 | 使用 `max(末次有限速度, 1.20 m/s)` 的独立保守速度假设制动，不回退到低参考速度 |
+| `TERMINAL_STOPPED_OUTSIDE_GOAL_REPLANNING` | terminal 制动已真实停稳但位置仍在容差外 | 先发布零，再从静止安全重规划 |
+| `GOAL_CAPTURE_BRAKING` | Smac Hybrid XY Forward 首次进入 XY 容差 | 锁存到达、取消重规划并沿现有轨迹有界制动 |
+| `GOAL_CAPTURE_SETTLING` | 捕获轨迹参考速度已经归零 | 发布全零空间指令，等待真实位置仍在 0.30 m 释放包络内，且 odom 线/角速度连续稳定 |
+| `GOAL_CAPTURE_DRIFTED_REPLANNING` | 捕获后真实停在 0.30 m 释放包络外 | 清空旧参考并从静止安全重规划 |
+| `ALIGNING_YAW` | terminal-yaw/lattice profile 在终点对齐 yaw | 同位置、逐步变化 yaw |
+| `GOAL_BRAKING` / `ALIGNING_YAW_SETTLING` | terminal-yaw 进入终点减速，或 yaw 对齐已进入稳定保持 | 继续有界制动/对齐，不提前清零 |
+| `GOAL_REACHED` | settle 条件连续满足 | 15 个零 |
+| `EMERGENCY_STOP_START_IN_COLLISION` | 当前机器人 cell 已在碰撞阈值内 | 立即发布零并清空不安全参考 |
+| `EMERGENCY_STOP_TF_UNAVAILABLE` | TF 中断且没有可信 odom 外推 | 立即发布零并等待恢复 |
+| `TF_ERROR` / `COSTMAP_ERROR` | 坐标或 costmap 无法安全使用 | 无 active 轨迹时为零；有 active 时先制动或安全停机 |
+| `NO_PATH_STATUS_*` | Nav2 没有返回可用路径 | 无可安全轨迹时为零 |
+| `INVALID_GOAL` / `INVALID_PATH` | 输入包含非法值或无法解析 | active 时保持/刹车；idle 时为零 |
+| `UNTRACKABLE_PATH` | 路径无法解析、坐标系不一致或不能通过当前安全处理 | active 时保持/刹车；idle 时为零 |
+| `UNSAFE_PATH` | 路径中心线或采样段碰撞 | active 时保持/刹车；没有安全参考时为零 |
+
+## 7. 常见故障
+
+### `remain_time` 每次都是 `[0.5, 1.0, 1.5, 2.0, 2.5]`
+
+这说明运行的不是当前持久时间轨迹 bridge，或仍有旧节点发布同名 topic。
+先执行 `ros2 topic info /remain_time --verbose` 和
+`ros2 topic info /waypoints_b --verbose`，确认 publisher 只有当前 bridge。
+
+### 机器人走得过快或指令变化很大
+
+检查 `nav2_waypoint_status` 是否为 `ACTIVE`/`BRAKING`，并记录 odom 速度、
+waypoint 差分、`remain_time` 差分。不要通过恢复距离档位处理；先确认当前
+实际参数来自 `nav2/nav2_params.yaml`。NavFn 巡航速度为 `0.30 m/s`，Smac
+Hybrid XY Forward 为 `0.80 m/s`；并确认
+时间轨迹没有被真实故障清除；active 参考收到新目标时应先进入有界刹车。
+
+### 频繁出现 `PATH_REPLAN_BLENDED` 或 `REPLAN_WAITING_FOR_BRAKE`
+
+检查 planner 是否周期性输出明显不同的路径、`map -> base_link` 是否稳定，
+以及新路径是否能在 `0.35 m` 内以当前 XY 动力学接入。规划器的普通更新不应造成
+waypoint 全零；只有确实无法安全接入时才进入 `BRAKING`。
+
+### `EMERGENCY_STOP_START_IN_COLLISION` 或 `UNSAFE_PATH`
+
+当前 global costmap 使用 `robot_radius=0.95 m`、`inflation_radius=1.10 m`，
+碰撞阈值为 253。检查地图、MuJoCo 场景、TF 和机器人初始位置；不要降低
+阈值或伪造 free start 来绕过安全门控。
+
+### `UNTRACKABLE_PATH`
+
+先查看 `/nav2_global_path`、`/nav2_sampled_waypoints_path` 和状态中的完整
+原因，区分非法值、frame 不一致、已知碰撞和 planner 自身没有可用路径。
+bridge 不再用首段 bearing、弦方向差或固定最小转弯半径直接拒绝路径；不要
+在策略输入层直接截断 yaw 或坐标。若路径曲率很大，先降低时间参数化后的
+速度，或选择能表达该几何的 planner/profile。
+
+### `TF_ERROR` 或 `extrapolation into the past`
+
+确认 TF 树只有 `map -> world -> odom -> base_link`，并确认 bridge 每次
+`ComputePathToPose` 请求刷新 goal stamp。实机运行时不要发布 sim 专用的
+恒等 `map -> world`；使用定位系统提供的 `map -> odom`。
+
+### `GOAL_REACHED` 太早或一直不出现
+
+确认 `/odom` 正常更新且时间戳连续；bridge 用相邻位姿差分估计平面速度和
+yaw 速度，不要求直接使用 odometry 的 twist 字段。NavFn XY profile 需要
+位置误差、平面速度和连续 `0.50 s` hold；Smac Hybrid XY Forward 首次进入
+容差后应依次出现 `GOAL_CAPTURE_BRAKING`、`GOAL_CAPTURE_SETTLING` 和
+`GOAL_REACHED`，且捕获期间不应再出现 `PLANNING`。yaw profile 还需要 yaw
+error 与角速度条件。
+
+### lattice 路径出现原地旋转
+
+planner 原始 Path 可以含原地旋转 primitive，但普通平移输出会统一为 XY
+目标，不直接复制 planner yaw。到达真实目标 XY 并稳定后，bridge 才进入
+独立 `ALIGNING_YAW`，此时同 XY 的 yaw 步长由 `max_yaw_rate` 限制。该
+profile 仍是实验边界，先用 NavFn 或 Hybrid forward 建立基线。
+
+## 8. A/B 验证和验收指标
+
+每次只改一个变量，每个 profile 使用同一组起点、目标、地图和随机种子。
+至少记录：
+
+- 成功到达率、摔倒率、到达时间；
+- `/waypoints_b` 相邻周期位置/heading 的最大值和 95 分位；
+- 每个未到期 deadline 的 `remain_time` 是否倒计时、deadline 是否每
+  `0.50 s` 推进；首项到期后队列会滚动，因此向量第一个元素允许从接近
+  0 跳回约 `0.50 s`，不能把整条向量简单要求为逐元素全程单调。
+- odom 平面速度的最大值、95 分位和超出当前 profile 巡航上限的时间比例；
+- odom 平面加速度和角速度；
+- planner endpoint 与请求 goal 的 XY/yaw 误差，确认 planner tolerance 没有被
+  误认为已经到达真实目标；
+- `ACTIVE`、`PATH_REPLAN_BLENDED`、`BRAKING`、`UNTRACKABLE_PATH`、
+  `EMERGENCY_STOP_START_IN_COLLISION` 的次数和持续时间；
+- 规划重算次数、重规划接入成功率、承诺窗口内 waypoint 是否被修改；
+- Smac Hybrid 终点从 `GOAL_CAPTURE_BRAKING` 到 `GOAL_REACHED` 的时间、
+  捕获后是否仍出现重规划，以及速度 settle 是否完整保持 `0.50 s`。
+
+推荐顺序：
+
+1. 直接回放一条合法训练时间轨迹，验证策略本身。
+2. 固定 NavFn 路径，验证 bridge 时间参数化和终点制动。
+3. 固定同一几何路径，只开启一次平滑重规划，验证 active/pending splice。
+4. 接入真实 planner 周期重规划，比较是否出现路径切换和速度越界。
+5. 最后再比较四个 profile。
+
+只有第一步稳定、第二步也稳定而第三/四步失败时，才应继续修改 bridge；
+如果直接回放合法训练轨迹也失败，问题应回到策略、动力学或动作接口，而
+不是继续放宽 planner 约束。
+
+## 9. 关键文件和验证
+
+```text
+stepit/scripts/nav2_global_goal_to_waypoints.py  ROS bridge 和状态机
+stepit/scripts/nav2_waypoint_trajectory.py       持久时间轨迹和速度积分
+stepit/scripts/nav2_waypoint_sampling.py         路径模型、碰撞和可执行性检查
+stepit/scripts/nav2_waypoint_profiles.py         frame 转换、heading 和终点辅助逻辑
+stepit/scripts/validate_waypoint_conditions.py   在线 ABI/deadline/XY 动力学检查
+stepit/scripts/collect_nav2_bridge_diagnostics.py 一键在线诊断采集入口
+stepit/scripts/nav2_bridge_diagnostics_common.py 自动统计和摘要逻辑
+stepit/nav2/nav2_params.yaml                     Nav2、costmap、bridge 参数
+stepit/nav2/launch/sim_global_planning.launch.py 地图、planner、TF、bridge 启动
+stepit/scripts/run_nav2_global_planning.sh       profile 校验和启动入口
+stepit/tests/test_nav2_waypoint_trajectory.py    时间轨迹契约测试
+stepit/tests/test_nav2_waypoint_bridge_state.py  bridge 状态和失败分支测试
+```
+
+### 9.1 2026-09-02 bridge 回归备份
+
+109 上已保留三份逐文件哈希校验过的备份：
+
+```text
+/home/xjh/workspace/mirlab_run/stepit/bridge_backups/
+  20260902_pre_overhaul_211009_baseline/       211009 行为对应的改动前基线
+  20260902_223144_regression_before_fix/        223144 异常实验时的完整现场
+  20260902_pacing_guard_fix/                    关闭默认 pacing 并修复越过判定后的当前版本
+```
+
+需要回退运行 bridge 时，先停止 Nav2/bridge，再从指定目录恢复；
+不使用 `--delete`，不会删除工程中其他文件：
+
+```bash
+cd /home/xjh/workspace/mirlab_run/stepit
+rsync -a bridge_backups/20260902_pre_overhaul_211009_baseline/ ./
+```
+
+基线备份包含 bridge 的两个 Python 运行文件、`nav2_params.yaml` 和三个对应
+测试文件。`223144` 现场备份另外包含当时的本流程文档。
+
+修改 bridge 后，在 109 上执行最小静态检查：
+
+```bash
+cd /home/xjh/workspace/mirlab_run/stepit
+bash -n scripts/run_nav2_global_planning.sh
+/usr/bin/python3 -m py_compile \
+  scripts/nav2_global_goal_to_waypoints.py \
+  scripts/nav2_waypoint_trajectory.py \
+  scripts/nav2_waypoint_sampling.py \
+  scripts/nav2_waypoint_profiles.py \
+  nav2/launch/sim_global_planning.launch.py
+```
+
+随后运行针对性测试：
+
+```bash
+cd /home/xjh/workspace/mirlab_run/stepit
+source /opt/ros/humble/setup.zsh
+/usr/bin/python3 -m unittest discover -s tests -p 'test_nav2_*.py' -v
+```
+
+测试通过不等于 sim-to-sim 已验证；仍需按本文件的 A/B 指标完成一次真实
+MuJoCo 运行。

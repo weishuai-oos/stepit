@@ -53,6 +53,8 @@ class GlobalGoalToWaypoints(Node):
         self.declare_parameter("slowdown_distance", 0.80)
         self.declare_parameter("final_heading_distance", 0.80)
         self.declare_parameter("yaw_rate_des", 0.80)
+        self.declare_parameter("max_segment_speed", 1.20)
+        self.declare_parameter("max_segment_acceleration", 4.00)
         self.declare_parameter("max_waypoint_distance", 1.35)
         self.declare_parameter("remain_time", [0.5, 1.0, 1.5, 2.0, 2.5])
         self.declare_parameter("use_goal_heading", False)
@@ -71,29 +73,32 @@ class GlobalGoalToWaypoints(Node):
         self.slowdown_distance = float(self.get_parameter("slowdown_distance").value)
         self.final_heading_distance = float(self.get_parameter("final_heading_distance").value)
         self.yaw_rate_des = float(self.get_parameter("yaw_rate_des").value)
+        self.max_segment_speed = float(self.get_parameter("max_segment_speed").value)
+        self.max_segment_acceleration = float(self.get_parameter("max_segment_acceleration").value)
         self.max_waypoint_distance = float(self.get_parameter("max_waypoint_distance").value)
         self.remain_time = [float(x) for x in self.get_parameter("remain_time").value]
         self.use_goal_heading = bool(self.get_parameter("use_goal_heading").value)
         self.hold_goal = bool(self.get_parameter("hold_goal").value)
 
-        if len(self.remain_time) != 5:
-            raise ValueError("remain_time must contain exactly 5 values for g1_traj_finetune_v2.")
-        if self.v_des < 0.0:
-            raise ValueError("v_des must be non-negative.")
-        if self.min_speed < 0.0:
-            raise ValueError("min_speed must be non-negative.")
-        if self.target_tolerance <= 0.0:
-            raise ValueError("target_tolerance must be positive.")
-        if self.heading_tolerance <= 0.0:
-            raise ValueError("heading_tolerance must be positive.")
-        if self.slowdown_distance <= 0.0:
-            raise ValueError("slowdown_distance must be positive.")
-        if self.final_heading_distance <= 0.0:
-            raise ValueError("final_heading_distance must be positive.")
-        if self.yaw_rate_des <= 0.0:
-            raise ValueError("yaw_rate_des must be positive.")
-        if self.max_waypoint_distance <= 0.0:
-            raise ValueError("max_waypoint_distance must be positive.")
+        self.validate_parameters()
+        self.max_time = max(self.remain_time)
+        self.effective_v_des = min(
+            self.v_des,
+            self.max_segment_speed,
+            self.max_segment_acceleration * self.remain_time[0],
+            self.max_waypoint_distance / self.max_time,
+        )
+        self.effective_min_speed = min(self.min_speed, self.effective_v_des)
+        self.clipping_warned = False
+
+        if self.effective_v_des < self.v_des:
+            self.get_logger().warn(
+                f"v_des={self.v_des:.2f} m/s is capped to {self.effective_v_des:.2f} m/s by "
+                f"max_segment_speed={self.max_segment_speed:.2f} m/s, "
+                f"max_segment_acceleration={self.max_segment_acceleration:.2f} m/s^2, "
+                f"max_waypoint_distance={self.max_waypoint_distance:.2f} m, "
+                f"and max remain_time={self.max_time:.2f} s."
+            )
 
         self.current_xy: Optional[tuple[float, float]] = None
         self.current_yaw: Optional[float] = None
@@ -114,18 +119,69 @@ class GlobalGoalToWaypoints(Node):
         self.create_subscription(PoseStamped, self.goal_topic, self.goal_callback, 10)
 
         publish_rate = float(self.get_parameter("publish_rate").value)
-        if publish_rate <= 0.0:
-            raise ValueError("publish_rate must be positive.")
+        if not math.isfinite(publish_rate) or publish_rate <= 0.0:
+            raise ValueError("publish_rate must be finite and positive.")
         self.create_timer(1.0 / publish_rate, self.timer_callback)
 
         self.get_logger().info(
             f"Publishing {self.waypoints_topic} from {self.goal_topic} + {self.odom_topic}; "
-            f"v_des={self.v_des:.2f} m/s, use_goal_heading={self.use_goal_heading}"
+            f"v_des={self.v_des:.2f} m/s, effective_v_des={self.effective_v_des:.2f} m/s, "
+            f"use_goal_heading={self.use_goal_heading}"
         )
 
+    def validate_parameters(self) -> None:
+        if len(self.remain_time) != 5:
+            raise ValueError("remain_time must contain exactly 5 values for g1_traj_finetune_v2.")
+        for name, value in (
+            ("v_des", self.v_des),
+            ("min_speed", self.min_speed),
+            ("target_tolerance", self.target_tolerance),
+            ("heading_tolerance", self.heading_tolerance),
+            ("slowdown_distance", self.slowdown_distance),
+            ("final_heading_distance", self.final_heading_distance),
+            ("yaw_rate_des", self.yaw_rate_des),
+            ("max_segment_speed", self.max_segment_speed),
+            ("max_segment_acceleration", self.max_segment_acceleration),
+            ("max_waypoint_distance", self.max_waypoint_distance),
+        ):
+            if not math.isfinite(value):
+                raise ValueError(f"{name} must be finite.")
+        if self.v_des < 0.0:
+            raise ValueError("v_des must be non-negative.")
+        if self.min_speed < 0.0:
+            raise ValueError("min_speed must be non-negative.")
+        for name, value in (
+            ("target_tolerance", self.target_tolerance),
+            ("heading_tolerance", self.heading_tolerance),
+            ("slowdown_distance", self.slowdown_distance),
+            ("final_heading_distance", self.final_heading_distance),
+            ("yaw_rate_des", self.yaw_rate_des),
+            ("max_segment_speed", self.max_segment_speed),
+            ("max_segment_acceleration", self.max_segment_acceleration),
+            ("max_waypoint_distance", self.max_waypoint_distance),
+        ):
+            if value <= 0.0:
+                raise ValueError(f"{name} must be positive.")
+        previous_time = 0.0
+        for index, time_value in enumerate(self.remain_time):
+            if not math.isfinite(time_value):
+                raise ValueError("remain_time values must be finite.")
+            if time_value <= previous_time:
+                raise ValueError(
+                    "remain_time must be strictly increasing and positive; "
+                    f"index {index} has {time_value:.3f} after {previous_time:.3f}."
+                )
+            previous_time = time_value
+
     def odom_callback(self, msg: Odometry) -> None:
-        self.current_xy = (msg.pose.pose.position.x, msg.pose.pose.position.y)
-        self.current_yaw = yaw_from_quat(msg.pose.pose.orientation)
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+        yaw = yaw_from_quat(msg.pose.pose.orientation)
+        if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(yaw)):
+            self.get_logger().warn("Ignoring odometry with non-finite pose values.")
+            return
+        self.current_xy = (x, y)
+        self.current_yaw = yaw
         self.odom_frame = msg.header.frame_id or "odom"
 
     def goal_callback(self, msg: PoseStamped) -> None:
@@ -133,9 +189,18 @@ class GlobalGoalToWaypoints(Node):
             self.get_logger().warn("Ignoring goal: no odometry received yet.")
             return
 
+        goal_yaw = yaw_from_quat(msg.pose.orientation)
+        if not (
+            math.isfinite(msg.pose.position.x)
+            and math.isfinite(msg.pose.position.y)
+            and math.isfinite(goal_yaw)
+        ):
+            self.get_logger().warn("Ignoring goal with non-finite pose values.")
+            return
+
         self.start_xy = self.current_xy
         self.goal_xy = (msg.pose.position.x, msg.pose.position.y)
-        self.goal_heading = yaw_from_quat(msg.pose.orientation)
+        self.goal_heading = goal_yaw
         self.goal_frame = msg.header.frame_id or self.odom_frame
         self.frame_warned = False
         self.reached_reported = False
@@ -225,7 +290,10 @@ class GlobalGoalToWaypoints(Node):
         remaining_along_path = max(0.0, seg_len - progress)
 
         speed_scale = min(1.0, remaining_along_path / self.slowdown_distance)
-        speed = min(self.v_des, max(self.min_speed, self.v_des * speed_scale))
+        speed = min(
+            self.effective_v_des,
+            max(self.effective_min_speed, self.effective_v_des * speed_scale),
+        )
 
         blend_start = max(0.0, seg_len - self.final_heading_distance)
         blend_span = max(1e-6, seg_len - blend_start)
@@ -288,6 +356,12 @@ class GlobalGoalToWaypoints(Node):
             scale = self.max_waypoint_distance / distance
             x_b *= scale
             y_b *= scale
+            if not self.clipping_warned:
+                self.get_logger().warn(
+                    f"Waypoint distance exceeded max_waypoint_distance={self.max_waypoint_distance:.2f} m "
+                    "and was clipped. Check v_des, remain_time, and frame consistency."
+                )
+                self.clipping_warned = True
 
         heading_b = wrap_to_pi(target_heading - self.current_yaw)
         return [x_b, y_b, heading_b]

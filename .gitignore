@@ -40,3 +40,8 @@ install/
 
 extern/nn_runtime/onnxruntime-linux-*
 package/ros2/CATKIN_IGNORE
+
+# 不跟踪的目录
+bridge_backups/
+diagnostics/
+__pycache__/

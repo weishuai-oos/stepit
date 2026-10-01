@@ -81,6 +81,7 @@ clean=false
 skip_configure=false
 cmake_args=(${STEPIT_BUILD_CMAKE_ARGS-})
 extra_args=(${STEPIT_BUILD_EXTRA_ARGS-})
+stepit_source=""
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -136,8 +137,14 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-if [[ ! -f "${workspace_dir}/src/stepit/CMakeLists.txt" ]]; then
-	die "Expected ${workspace_dir}/src/stepit/CMakeLists.txt. Run from your StepIt workspace root or set STEPIT_WS."
+if [[ -f "${workspace_dir}/src/stepit/CMakeLists.txt" ]]; then
+	# Conventional workspace layout: <workspace>/src/stepit.
+	stepit_source="${workspace_dir}/src/stepit"
+elif [[ -f "${workspace_dir}/CMakeLists.txt" ]]; then
+	# Direct repository checkout: the repository root is the CMake source tree.
+	stepit_source="${workspace_dir}"
+else
+	die "Expected ${workspace_dir}/src/stepit/CMakeLists.txt or ${workspace_dir}/CMakeLists.txt. Run from a StepIt workspace/repository root or set STEPIT_WS."
 fi
 if [[ -z "$build_tool" ]]; then
 	if [[ -f "${workspace_dir}/.stepit/build_tool" ]]; then
@@ -176,7 +183,7 @@ case "$build_tool" in
 
 		cmake_args+=(
 			"-B${build_dir}"
-			"-S${workspace_dir}/src/stepit"
+			"-S${stepit_source}"
 			"-DCMAKE_BUILD_TYPE=${build_type}"
 			"-DCMAKE_INSTALL_PREFIX=${install_prefix}"
 			"-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
